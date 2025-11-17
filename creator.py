@@ -3,11 +3,15 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from db import insert_creator_registry_row, fetch_creator_registry, update_creator_registry_row
-
+from db import (
+    insert_creator_registry_row,
+    fetch_creator_registry,
+    update_creator_registry_row,
+    get_connection,
+)
 
 # ----------------- PAGE CONFIG -----------------
-st.set_page_config(page_title="Creator Registry Test", layout="wide")
+st.set_page_config(page_title="Creator Registry & Submissions", layout="wide")
 
 
 # ----------------- CONSTANTS -----------------
@@ -20,12 +24,109 @@ AGENCY_OPTIONS = [
     "HM Agency",
 ]
 
-
 # ----------------- SIDEBAR NAV -----------------
 page = st.sidebar.radio(
     "Navigation",
-    ["Creator Registry", "Creator List"],
+    ["Creator Registry", "Creator List", "Content Submissions"],
 )
+
+# =================================================
+# HELPERS FOR CONTENT_SUBMISSIONS
+# =================================================
+
+def fetch_content_submissions():
+    """
+    Fetch joined view for content_submissions:
+    - joins creator_registry, agency_map, category_map, status_map
+    """
+    conn = get_connection()
+    sql = """
+        SELECT
+            cs.id,
+            cs.submission_date,
+            cs.posting_date,
+            cs.post_type,
+            cs.link_post,
+            cs.level,
+            cs.notes,
+            cs.creator_id,
+            cr.tiktok_id,
+            cr.full_name,
+            cs.management_id,
+            am.agency_name,
+            cs.category_id,
+            cat.category_name,
+            cs.status_id,
+            sm.status_name,
+            cs.created_at
+        FROM public.content_submissions cs
+        LEFT JOIN public.creator_registry cr
+            ON cs.creator_id = cr.id
+        LEFT JOIN public.agency_map am
+            ON cs.management_id = am.id
+        LEFT JOIN public.category_map cat
+            ON cs.category_id = cat.id
+        LEFT JOIN public.status_map sm
+            ON cs.status_id = sm.id
+        ORDER BY cs.created_at DESC, cs.id DESC;
+    """
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+        return rows
+    finally:
+        conn.close()
+
+
+def fetch_status_map():
+    """
+    Fetch status_map for dropdowns:
+    id, status_name
+    """
+    conn = get_connection()
+    sql = """
+        SELECT id, status_name
+        FROM public.status_map
+        ORDER BY id;
+    """
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+        return pd.DataFrame(rows)
+    finally:
+        conn.close()
+
+
+def update_content_submission_row(row_id, updated_fields: dict):
+    """
+    Update only specified fields in content_submissions.
+    Example:
+        update_content_submission_row(10, {"status_id": 2, "notes": "Flagged"})
+    """
+    if not updated_fields:
+        return
+
+    set_clause = ", ".join([f"{col} = %({col})s" for col in updated_fields.keys()])
+    sql = f"""
+        UPDATE public.content_submissions
+        SET {set_clause}
+        WHERE id = %(id)s
+    """
+
+    params = updated_fields.copy()
+    params["id"] = row_id
+
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+    finally:
+        conn.close()
 
 
 # =================================================
@@ -98,8 +199,6 @@ if page == "Creator Registry":
 
         if submitted:
             # ---------- VALIDATIONS ----------
-
-            # All mandatory except followers & notes
             if not agency_name:
                 st.error("Agency Name is required.")
                 st.stop()
@@ -136,7 +235,6 @@ if page == "Creator Registry":
                 st.error("Phone number cannot be empty.")
                 st.stop()
 
-            # Phone: must NOT contain +62 or 62 at beginning
             if phone_rest.startswith("+") or phone_rest.startswith("62"):
                 st.error("Do NOT type +62 or 62 in the phone field. Only the remaining number, e.g. 8123xxxx.")
                 st.stop()
@@ -185,7 +283,6 @@ elif page == "Creator List":
     st.title("Creator List")
     st.write("View existing creators and edit specific profiles.")
 
-    # Fetch all rows
     rows = fetch_creator_registry()
     if not rows:
         st.info("No creator data available.")
@@ -203,9 +300,17 @@ elif page == "Creator List":
     tiktok_ids = ["(Show All)"] + sorted(df["tiktok_id"].unique())
     tiktok_id_filter = st.selectbox("Filter by TikTok ID", tiktok_ids)
 
+    # NEW: Filter by Binding Status
+    binding_options = ["(Show All)"] + sorted(df["binding_status"].dropna().unique())
+    binding_filter = st.selectbox("Filter by Binding Status", binding_options)
+
     filtered_df = df.copy()
+
     if tiktok_id_filter != "(Show All)":
-        filtered_df = df[df["tiktok_id"] == tiktok_id_filter]
+        filtered_df = filtered_df[filtered_df["tiktok_id"] == tiktok_id_filter]
+
+    if binding_filter != "(Show All)":
+        filtered_df = filtered_df[filtered_df["binding_status"] == binding_filter]
 
     # ---------- VIEW-ONLY TABLE ----------
     st.subheader("Creator Data (View Only)")
@@ -225,13 +330,11 @@ elif page == "Creator List":
             sorted(df["tiktok_id"].unique())
         )
 
-        # Get row for that TikTok ID
         row = df[df["tiktok_id"] == edit_tiktok_id].iloc[0]
         row_id = int(row["id"])
 
         st.write(f"Editing creator with ID: **{row_id}**")
 
-        # Editable form
         with st.form("edit_creator_form"):
 
             agency_name = st.selectbox(
@@ -245,7 +348,6 @@ elif page == "Creator List":
                 value=row["tiktok_id"],
             )
 
-            # Followers default (handle NaN / None)
             followers_raw = row["followers"]
             if pd.isna(followers_raw) or followers_raw is None:
                 followers_default = 0
@@ -263,7 +365,6 @@ elif page == "Creator List":
             domicile_new = st.text_input("Domicile", value=row["domicile"])
             uid_new = st.text_input("UID", value=row["uid"])
 
-            # Phone
             st.write("Phone Number")
             col_code, col_num = st.columns([1, 3])
             with col_code:
@@ -281,7 +382,6 @@ elif page == "Creator List":
                 index=0 if row["binding_status"] == "Unbound" else 1,
             )
 
-            # Onboarding date default (handle NaN / None)
             onboarding_raw = row["onboarding_date"]
             if onboarding_raw is None or pd.isna(onboarding_raw):
                 onboarding_default = dt.date.today()
@@ -300,7 +400,6 @@ elif page == "Creator List":
             submit_edit = st.form_submit_button("Apply Changes")
 
         if submit_edit:
-            # ---------- VALIDATION ----------
             if not uid_new.isdigit():
                 st.error("UID must contain numbers only.")
                 st.stop()
@@ -315,7 +414,6 @@ elif page == "Creator List":
 
             phone_final = f"+62{phone_new}"
 
-            # Detect changed fields
             updated_fields = {}
 
             def check_change(key, new_val):
@@ -342,5 +440,127 @@ elif page == "Creator List":
                     st.info("Refresh the page to see updated values in the table above.")
                 except Exception as e:
                     st.error(f"Error updating creator: {e}")
+            else:
+                st.info("No changes detected.")
+
+
+# =================================================
+# PAGE 3: CONTENT SUBMISSIONS (VIEW + EDIT)
+# =================================================
+elif page == "Content Submissions":
+    st.title("Content Submissions")
+    st.write("View and edit content submissions linked to creators.")
+
+    submissions_rows = fetch_content_submissions()
+    if not submissions_rows:
+        st.info("No content submissions available.")
+        st.stop()
+
+    sub_df = pd.DataFrame(submissions_rows)
+
+    # ---------- FILTERS ----------
+    st.subheader("Filters")
+
+    # Filter by TikTok ID
+    tiktok_ids = ["(Show All)"] + sorted(sub_df["tiktok_id"].dropna().unique())
+    tiktok_filter = st.selectbox("Filter by TikTok ID", tiktok_ids)
+
+    # Filter by Status
+    status_names = ["(Show All)"] + sorted(sub_df["status_name"].dropna().unique())
+    status_filter = st.selectbox("Filter by Status", status_names)
+
+    filtered_sub_df = sub_df.copy()
+
+    if tiktok_filter != "(Show All)":
+        filtered_sub_df = filtered_sub_df[filtered_sub_df["tiktok_id"] == tiktok_filter]
+
+    if status_filter != "(Show All)":
+        filtered_sub_df = filtered_sub_df[filtered_sub_df["status_name"] == status_filter]
+
+    st.subheader("Content Submissions (View Only)")
+    st.dataframe(
+        filtered_sub_df,
+        use_container_width=True,
+        height=400,
+    )
+
+    # ---------- EDIT SPECIFIC SUBMISSION ----------
+    with st.expander("Edit Submission", expanded=False):
+        st.write("Select a submission to edit (by ID).")
+
+        submission_ids = sorted(sub_df["id"].unique())
+        selected_sub_id = st.selectbox("Submission ID", submission_ids)
+
+        sub_row = sub_df[sub_df["id"] == selected_sub_id].iloc[0]
+
+        st.write(f"Editing Submission **ID {selected_sub_id}**")
+        st.write(f"Creator: **{sub_row['tiktok_id']} ({sub_row['full_name']})**")
+        st.write(f"Agency: **{sub_row['agency_name']}**")
+        st.write(f"Link: {sub_row['link_post']}")
+
+        status_df = fetch_status_map()
+
+        # Determine default index for status dropdown
+        if not status_df.empty and sub_row["status_id"] in status_df["id"].values:
+            default_status_index = status_df.index[status_df["id"] == sub_row["status_id"]][0]
+        else:
+            default_status_index = 0
+
+        with st.form("edit_submission_form"):
+
+            status_choice = st.selectbox(
+                "Status",
+                options=status_df.index,
+                format_func=lambda i: status_df.loc[i, "status_name"],
+                index=default_status_index,
+            )
+            new_status_id = int(status_df.loc[status_choice, "id"])
+
+            # Level (optional integer)
+            level_raw = sub_row["level"]
+            if level_raw is None or pd.isna(level_raw):
+                level_default = 0
+            else:
+                try:
+                    level_default = int(level_raw)
+                except Exception:
+                    level_default = 0
+
+            new_level = st.number_input(
+                "Level (optional)",
+                min_value=0,
+                step=1,
+                value=level_default,
+            )
+
+            new_notes = st.text_area(
+                "Notes",
+                value=sub_row["notes"] if sub_row["notes"] else "",
+            )
+
+            submit_sub_edit = st.form_submit_button("Apply Changes")
+
+        if submit_sub_edit:
+            updated_sub_fields = {}
+
+            if sub_row["status_id"] != new_status_id:
+                updated_sub_fields["status_id"] = new_status_id
+
+            # store None if 0
+            level_value = None if new_level == 0 else new_level
+            if sub_row["level"] != level_value:
+                updated_sub_fields["level"] = level_value
+
+            new_notes_clean = new_notes if new_notes.strip() else None
+            if sub_row["notes"] != new_notes_clean:
+                updated_sub_fields["notes"] = new_notes_clean
+
+            if updated_sub_fields:
+                try:
+                    update_content_submission_row(selected_sub_id, updated_sub_fields)
+                    st.success("Submission updated successfully! ✅")
+                    st.info("Refresh the page to see updated values in the table above.")
+                except Exception as e:
+                    st.error(f"Error updating submission: {e}")
             else:
                 st.info("No changes detected.")
