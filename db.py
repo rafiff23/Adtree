@@ -9,7 +9,7 @@ def get_connection():
         port=os.getenv("PG_PORT", "5432"),
         dbname=os.getenv("PG_DB", "Adtree"),
         user=os.getenv("PG_USER", "postgres"),
-        password=os.getenv("PG_PASSWORD", "123"),
+        password=os.getenv("PG_PASSWORD", "4dtr33"),
         cursor_factory=RealDictCursor,
     )
     return conn
