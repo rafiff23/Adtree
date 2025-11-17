@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from db import get_connection   # reuse your existing DB connector
+from db import get_connection   # reuse your existing DB connecto
 
 # -----------------------------
 # DB HELPERS (CACHED)
