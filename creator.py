@@ -7,7 +7,7 @@ from db import insert_creator_registry_row, fetch_creator_registry, update_creat
 
 
 # ----------------- PAGE CONFIG -----------------
-st.set_page_config(page_title="Creator Registry", layout="wide")
+st.set_page_config(page_title="Creator Registry Test", layout="wide")
 
 
 # ----------------- CONSTANTS -----------------
