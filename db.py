@@ -141,7 +141,7 @@ def fetch_creator_registry(tiktok_id_filter=None, start_date=None, end_date=None
 
 def update_creator_registry_row(row_id, updated_fields):
     """
-    Update only the fields provided in updated_fields dict.
+    Updateonly the fields provided in updated_fields dict.
     Example:
     update_creator_registry_row(5, {"full_name": "New Name", "followers": 5000})
     """
