@@ -11,9 +11,9 @@ def get_connection():
     conn = psycopg2.connect(
         host=os.getenv("PG_HOST", "localhost"),
         port=os.getenv("PG_PORT", "5432"),
-        dbname=os.getenv("PG_DB", "Adtree_Final"),
+        dbname=os.getenv("PG_DB", "adtree"),
         user=os.getenv("PG_USER", "postgres"),
-        password=os.getenv("PG_PASSWORD", "123"),
+        password=os.getenv("PG_PASSWORD", "4dtr33"),
         cursor_factory=RealDictCursor,
     )
     return conn
