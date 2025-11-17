@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from db import get_connection   # we reuse your existing DB connector
+from db import get_connection   # reuse your existing DB connector
 
 # -----------------------------
 # DB HELPERS (CACHED)
@@ -20,13 +20,17 @@ def get_conn():
 def load_creators():
     """
     Load creators from creator_registry.
-    We expect columns: id, username, full_name (or adjust if your column name differs).
+
+    We use:
+    - id         -> creator_id (for DB)
+    - tiktok_id  -> shown in dropdown
+    - full_name  -> shown in dropdown label
     """
     conn = get_conn()
     query = """
-        SELECT id, username, full_name
+        SELECT id, tiktok_id, full_name
         FROM creator_registry
-        ORDER BY username;
+        ORDER BY tiktok_id;
     """
     df = pd.read_sql(query, conn)
     return df
@@ -63,7 +67,7 @@ def load_categories():
 def get_default_status_id():
     """
     Get the ID for 'normal quality' from status_map.
-    If not found, returns None (we can still insert NULL).
+    If not found, returns None (so status_id will be NULL).
     """
     conn = get_conn()
     query = """
@@ -141,7 +145,11 @@ def main():
     st.markdown(
         """
         Use this form to submit new TikTok posts.
-        All dropdown values are controlled from the database to keep data clean.
+
+        - **Creator** options come from `creator_registry`
+        - **Management** from `agency_map`
+        - **Category** from `category_map`
+        - Link must be a TikTok URL (must contain `tiktok`)
         """
     )
 
@@ -167,23 +175,26 @@ def main():
         # 1. Submission Date (default today)
         submission_date = st.date_input("Submission Date", value=date.today())
 
-        # 2. Username dropdown (from creator_registry)
-        # Build label -> id mapping, e.g. "username - full_name" : id
+        # 2. Creator dropdown (tiktok_id + full_name), value = creator_id
+        # Build label -> id mapping, e.g. "@id - Full Name" : id
         creators_df["label"] = creators_df.apply(
-            lambda row: f"{row['username']} - {row['full_name']}"
+            lambda row: f"{row['tiktok_id']} - {row['full_name']}"
             if pd.notnull(row.get("full_name"))
-            else str(row["username"]),
+            else str(row["tiktok_id"]),
             axis=1,
         )
-        username_options = creators_df["label"].tolist()
-        selected_label = st.selectbox("Username", username_options)
 
-        # Get selected creator_id and full_name
-        selected_creator_row = creators_df.loc[creators_df["label"] == selected_label].iloc[0]
+        creator_labels = creators_df["label"].tolist()
+        selected_creator_label = st.selectbox("Creator (TikTok ID)", creator_labels)
+
+        selected_creator_row = creators_df.loc[
+            creators_df["label"] == selected_creator_label
+        ].iloc[0]
         creator_id = int(selected_creator_row["id"])
         full_name = selected_creator_row.get("full_name")
+        tiktok_id = selected_creator_row.get("tiktok_id")
 
-        # 3. Nama Lengkap (auto from username, read-only)
+        # 3. Nama Lengkap (auto), read-only
         st.text_input(
             "Nama Lengkap (auto)",
             value=full_name if pd.notnull(full_name) else "",
@@ -192,9 +203,12 @@ def main():
 
         # 4. Management Name dropdown (from agency_map)
         mgmt_df["label"] = mgmt_df["agency_name"]
-        mgmt_options = mgmt_df["label"].tolist()
-        selected_mgmt_label = st.selectbox("Management Name", mgmt_options)
-        selected_mgmt_row = mgmt_df.loc[mgmt_df["label"] == selected_mgmt_label].iloc[0]
+        mgmt_labels = mgmt_df["label"].tolist()
+        selected_mgmt_label = st.selectbox("Management Name", mgmt_labels)
+
+        selected_mgmt_row = mgmt_df.loc[
+            mgmt_df["label"] == selected_mgmt_label
+        ].iloc[0]
         management_id = int(selected_mgmt_row["id"])
 
         # 5. Posting Date
@@ -202,9 +216,12 @@ def main():
 
         # 6. Category dropdown (from category_map)
         cat_df["label"] = cat_df["category_name"]
-        cat_options = cat_df["label"].tolist()
-        selected_cat_label = st.selectbox("Category", cat_options)
-        selected_cat_row = cat_df.loc[cat_df["label"] == selected_cat_label].iloc[0]
+        cat_labels = cat_df["label"].tolist()
+        selected_cat_label = st.selectbox("Category", cat_labels)
+
+        selected_cat_row = cat_df.loc[
+            cat_df["label"] == selected_cat_label
+        ].iloc[0]
         category_id = int(selected_cat_row["id"])
 
         # 7. Jenis Postingan
@@ -220,23 +237,22 @@ def main():
         link_post = st.text_input("Link Post (must be a TikTok URL)")
 
         # Hidden / backend fields
-        # For now we leave level and notes as None, and status = 'normal quality' if exists
-        level = None
-        status_id = default_status_id
+        level = None               # can be filled by rule later
+        status_id = default_status_id  # default "normal quality" if exists
         notes = None
 
         submitted = st.form_submit_button("Submit")
 
-    # ---- Submission handling ----
+    # ---- Submit handler ----
     if submitted:
-        # Basic validation
         errors = []
+
+        # Basic validations
+        if not link_post.strip():
+            errors.append("Link Post cannot be empty.")
 
         if "tiktok" not in link_post.lower():
             errors.append("Link Post must be a TikTok URL (must contain 'tiktok').")
-
-        if not link_post.strip():
-            errors.append("Link Post cannot be empty.")
 
         if submission_date is None:
             errors.append("Submission Date is required.")
@@ -249,7 +265,7 @@ def main():
                 st.error(e)
             return
 
-        # Attempt insert
+        # Insert into DB
         try:
             insert_submission(
                 submission_date=submission_date,
@@ -268,7 +284,9 @@ def main():
         else:
             st.success("Submission saved successfully.")
             st.info(
-                f"Saved for creator: {selected_label} | Management: {selected_mgmt_label} | Category: {selected_cat_label}"
+                f"Saved for creator: {tiktok_id} - {full_name} | "
+                f"Management: {selected_mgmt_label} | "
+                f"Category: {selected_cat_label}"
             )
 
 
