@@ -1,5 +1,5 @@
 import datetime as dt
-
+from datetime import date
 import pandas as pd
 import streamlit as st
 
@@ -457,6 +457,8 @@ elif page == "Content Submissions":
         st.stop()
 
     sub_df = pd.DataFrame(submissions_rows)
+    # Convert submission_date column to datetime objects for filtering
+    sub_df["submission_date"] = pd.to_datetime(sub_df["submission_date"]).dt.normalize()
 
     # ---------- FILTERS ----------
     st.subheader("Filters")
@@ -469,6 +471,36 @@ elif page == "Content Submissions":
     status_names = ["(Show All)"] + sorted(sub_df["status_name"].dropna().unique())
     status_filter = st.selectbox("Filter by Status", status_names)
 
+    # --- DATE RANGE FILTER (UPDATED) ---
+    st.write("Filter by Submission Date Range:")
+
+    # Determine min/max for the date pickers
+    # Min value allowed: Earliest date in DB
+    min_db_date = sub_df["submission_date"].min().date() if not sub_df.empty else date.today()
+    
+    # Max value allowed: Today
+    today_date = date.today()
+
+    # Create two columns for side-by-side UI
+    d_col1, d_col2 = st.columns(2)
+
+    with d_col1:
+        start_date = st.date_input(
+            "Start Date",
+            value=min_db_date,      # Default: Oldest date in data
+            min_value=min_db_date,
+            max_value=today_date
+        )
+
+    with d_col2:
+        end_date = st.date_input(
+            "End Date",
+            value=today_date,       # Default: Today
+            min_value=min_db_date,
+            max_value=today_date
+        )
+    # -----------------------------------
+
     filtered_sub_df = sub_df.copy()
 
     if tiktok_filter != "(Show All)":
@@ -477,12 +509,22 @@ elif page == "Content Submissions":
     if status_filter != "(Show All)":
         filtered_sub_df = filtered_sub_df[filtered_sub_df["status_name"] == status_filter]
 
+    # --- APPLY DATE RANGE LOGIC (UPDATED) ---
+    # Filter rows where date is >= start_date AND <= end_date
+    if not filtered_sub_df.empty:
+        # Ensure we compare date objects to date objects
+        mask = (filtered_sub_df["submission_date"].dt.date >= start_date) & \
+               (filtered_sub_df["submission_date"].dt.date <= end_date)
+        filtered_sub_df = filtered_sub_df[mask]
+    # ----------------------------------------
+
     st.subheader("Content Submissions (View Only)")
     st.dataframe(
         filtered_sub_df,
         use_container_width=True,
         height=400,
     )
+    # END NEW FILTER
 
     # ---------- EDIT SPECIFIC SUBMISSION ----------
     with st.expander("Edit Submission", expanded=False):

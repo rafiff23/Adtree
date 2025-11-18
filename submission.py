@@ -51,6 +51,7 @@ def load_category_map():
         cur.execute("""
             SELECT id, category_name
             FROM public.category_map
+            WHERE id != 3
             ORDER BY id;
         """)
         rows = cur.fetchall()
@@ -112,7 +113,8 @@ def main():
         # Submission date
         submission_date = st.date_input(
             "Submission Date",
-            value=date.today()
+            value=date.today(),
+            disabled=True
         )
 
         # Creator Dropdown
@@ -140,7 +142,7 @@ def main():
         st.write(f"**Agency:** {selected['agency_name']}")
 
         # Posting date
-        posting_date = st.date_input("Posting Date")
+        posting_date = st.date_input("Posting Date", value= date.today(), disabled=True)
 
         # Category
         category_choice = st.selectbox(
