@@ -51,7 +51,7 @@ def load_category_map():
         cur.execute("""
             SELECT id, category_name
             FROM public.category_map
-            WHERE id != 3
+            WHERE id != 4
             ORDER BY id;
         """)
         rows = cur.fetchall()
