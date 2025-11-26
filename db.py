@@ -10,7 +10,7 @@ from psycopg2.extras import RealDictCursor
 def get_connection():
     conn = psycopg2.connect(
         host=os.getenv("PG_HOST", "localhost"),
-        port=os.getenv("PG_PORT", "5433"),
+        port=os.getenv("PG_PORT", "5432"),
         dbname=os.getenv("PG_DB", "adtree"),
         user=os.getenv("PG_USER", "postgres"),
         password=os.getenv("PG_PASSWORD", "4dtr33"),
@@ -66,7 +66,7 @@ def bulk_update_content_submissions(updates: list):
         raise Exception(f"Failed to bulk update submissions: {str(e)}")
     finally:
         conn.close()
-        
+
 # def bulk_update_content_submissions(updates: list):
 #     """
 #     Bulk update content_submissions for status_id and reason.
