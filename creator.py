@@ -8,6 +8,7 @@ from db import (
     fetch_creator_registry,
     update_creator_registry_row,
     get_connection,
+    bulk_update_content_submissions,
 )
 
 # ----------------- PAGE CONFIG -----------------
@@ -49,6 +50,7 @@ def fetch_content_submissions():
             cs.link_post,
             cs.level,
             cs.notes,
+            cs.reason,              -- ← ADD THIS LINE
             cs.creator_id,
             cr.tiktok_id,
             cr.full_name,
@@ -78,6 +80,51 @@ def fetch_content_submissions():
         return rows
     finally:
         conn.close()
+
+# def fetch_content_submissions():
+#     """
+#     Fetch joined view for content_submissions:
+#     - joins creator_registry, agency_map, category_map, status_map
+#     """
+#     conn = get_connection()
+#     sql = """
+#         SELECT
+#             cs.id,
+#             cs.submission_date,
+#             cs.posting_date,
+#             cs.post_type,
+#             cs.link_post,
+#             cs.level,
+#             cs.notes,
+#             cs.creator_id,
+#             cr.tiktok_id,
+#             cr.full_name,
+#             cs.management_id,
+#             am.agency_name,
+#             cs.category_id,
+#             cat.category_name,
+#             cs.status_id,
+#             sm.status_name,
+#             cs.created_at
+#         FROM public.content_submissions cs
+#         LEFT JOIN public.creator_registry cr
+#             ON cs.creator_id = cr.id
+#         LEFT JOIN public.agency_map am
+#             ON cs.management_id = am.id
+#         LEFT JOIN public.category_map cat
+#             ON cs.category_id = cat.id
+#         LEFT JOIN public.status_map sm
+#             ON cs.status_id = sm.id
+#         ORDER BY cs.created_at DESC, cs.id DESC;
+#     """
+#     try:
+#         with conn:
+#             with conn.cursor() as cur:
+#                 cur.execute(sql)
+#                 rows = cur.fetchall()
+#         return rows
+#     finally:
+#         conn.close()
 
 
 def fetch_status_map():
@@ -449,160 +496,264 @@ elif page == "Creator List":
 # =================================================
 elif page == "Content Submissions":
     st.title("Content Submissions")
-    st.write("View and edit content submissions linked to creators.")
+    st.write("Monitor submissions with the read-only table below. Need to update statuses? Open the **Edit Submissions** expander.")
 
+    # Fetch data
     submissions_rows = fetch_content_submissions()
     if not submissions_rows:
         st.info("No content submissions available.")
         st.stop()
 
     sub_df = pd.DataFrame(submissions_rows)
-    # Convert submission_date column to datetime objects for filtering
     sub_df["submission_date"] = pd.to_datetime(sub_df["submission_date"]).dt.normalize()
+    sub_df["posting_date"] = pd.to_datetime(sub_df["posting_date"]).dt.date
 
-    # ---------- FILTERS ----------
+    # Fetch status map for dropdown options (needed for editable section)
+    status_df = fetch_status_map()
+    status_options = status_df["status_name"].tolist()
+
+    # ---------- FILTERS (SIDE BY SIDE) ----------
     st.subheader("Filters")
-
-    # Filter by TikTok ID
-    tiktok_ids = ["(Show All)"] + sorted(sub_df["tiktok_id"].dropna().unique())
-    tiktok_filter = st.selectbox("Filter by TikTok ID", tiktok_ids)
-
-    # Filter by Status
-    status_names = ["(Show All)"] + sorted(sub_df["status_name"].dropna().unique())
-    status_filter = st.selectbox("Filter by Status", status_names)
-
-    # --- DATE RANGE FILTER (UPDATED) ---
-    st.write("Filter by Submission Date Range:")
-
-    # Determine min/max for the date pickers
-    # Min value allowed: Earliest date in DB
-    min_db_date = sub_df["submission_date"].min().date() if not sub_df.empty else date.today()
     
-    # Max value allowed: Today
-    today_date = date.today()
-
-    # Create two columns for side-by-side UI
-    d_col1, d_col2 = st.columns(2)
-
-    with d_col1:
-        start_date = st.date_input(
-            "Start Date",
-            value=min_db_date,      # Default: Oldest date in data
-            min_value=min_db_date,
-            max_value=today_date
+    filter_col1, filter_col2 = st.columns(2)
+    
+    with filter_col1:
+        # TikTok ID filter
+        tiktok_ids = ["(Show All)"] + sorted(sub_df["tiktok_id"].dropna().unique())
+        tiktok_filter = st.selectbox("Filter by TikTok ID", tiktok_ids)
+    
+    with filter_col2:
+        # Posting Date Range filter
+        min_posting_date = sub_df["posting_date"].min()
+        max_posting_date = sub_df["posting_date"].max()
+        
+        posting_date_range = st.date_input(
+            "Filter by Posting Date Range",
+            value=(min_posting_date, max_posting_date),
+            min_value=min_posting_date,
+            max_value=max_posting_date,
+            help="Select start and end dates"
         )
 
-    with d_col2:
-        end_date = st.date_input(
-            "End Date",
-            value=today_date,       # Default: Today
-            min_value=min_db_date,
-            max_value=today_date
-        )
-    # -----------------------------------
-
+    # Apply filters
     filtered_sub_df = sub_df.copy()
-
+    
     if tiktok_filter != "(Show All)":
         filtered_sub_df = filtered_sub_df[filtered_sub_df["tiktok_id"] == tiktok_filter]
+    
+    if len(posting_date_range) == 2:
+        start_date, end_date = posting_date_range
+        filtered_sub_df = filtered_sub_df[
+            (filtered_sub_df["posting_date"] >= start_date) & 
+            (filtered_sub_df["posting_date"] <= end_date)
+        ]
 
-    if status_filter != "(Show All)":
-        filtered_sub_df = filtered_sub_df[filtered_sub_df["status_name"] == status_filter]
-
-    # --- APPLY DATE RANGE LOGIC (UPDATED) ---
-    # Filter rows where date is >= start_date AND <= end_date
-    if not filtered_sub_df.empty:
-        # Ensure we compare date objects to date objects
-        mask = (filtered_sub_df["submission_date"].dt.date >= start_date) & \
-               (filtered_sub_df["submission_date"].dt.date <= end_date)
-        filtered_sub_df = filtered_sub_df[mask]
-    # ----------------------------------------
-
-    st.subheader("Content Submissions (View Only)")
+    # ---------- PRETTY VIEW-ONLY TABLE ----------
+    st.subheader("📊 Submissions Overview (Read-Only)")
+    
+    # Select columns for the view table
+    view_columns = [
+        "id", 
+        "tiktok_id", 
+        "agency_name", 
+        "posting_date", 
+        "category_name",  # Using category_name instead of category_id for readability
+        "post_type", 
+        "link_post", 
+        "level", 
+        "status_name", 
+        "reason"
+    ]
+    
+    view_df = filtered_sub_df[view_columns].copy()
+    
+    # Fill NaN values for prettier display
+    view_df["reason"] = view_df["reason"].fillna("—")  # Em dash for empty reasons
+    view_df["level"] = view_df["level"].fillna(0).astype(int)  # Convert level to integer
+    view_df["category_name"] = view_df["category_name"].fillna("Uncategorized")
+    
+    # Configure pretty column display
+    view_column_config = {
+        "id": st.column_config.NumberColumn(
+            "ID",
+            help="Submission ID",
+            width="small",
+        ),
+        "tiktok_id": st.column_config.TextColumn(
+            "TikTok ID",
+            help="Creator's TikTok handle",
+            width="medium",
+        ),
+        "agency_name": st.column_config.TextColumn(
+            "Agency",
+            help="Management agency",
+            width="medium",
+        ),
+        "posting_date": st.column_config.DateColumn(
+            "Posted On",
+            help="When the content was posted",
+            width="small",
+        ),
+        "category_name": st.column_config.TextColumn(
+            "Category",
+            help="Industry category (Accommodation, Dining, etc.)",
+            width="medium",
+        ),
+        "post_type": st.column_config.TextColumn(
+            "Type",
+            help="Content type (video, image, etc.)",
+            width="small",
+        ),
+        "link_post": st.column_config.LinkColumn(
+            "Post Link",
+            help="Click to view the post",
+            width="medium",
+            display_text="🔗 View Post"
+        ),
+        "level": st.column_config.NumberColumn(
+            "Level",
+            help="Creator level or tier",
+            width="small",
+        ),
+        "status_name": st.column_config.TextColumn(
+            "Status",
+            help="Current submission status",
+            width="medium",
+        ),
+        "reason": st.column_config.TextColumn(
+            "Reason",
+            help="Why the status was set",
+            width="large",
+        ),
+    }
+    
+    # Display the pretty read-only table
     st.dataframe(
-        filtered_sub_df,
+        view_df,
+        column_config=view_column_config,
         use_container_width=True,
         height=400,
+        hide_index=True,
     )
-    # END NEW FILTER
+    
+    # Show record count
+    st.caption(f"📌 Showing **{len(view_df)}** submission(s)")
 
-    # ---------- EDIT SPECIFIC SUBMISSION ----------
-    with st.expander("Edit Submission", expanded=False):
-        st.write("Select a submission to edit (by ID).")
-
-        submission_ids = sorted(sub_df["id"].unique())
-        selected_sub_id = st.selectbox("Submission ID", submission_ids)
-
-        sub_row = sub_df[sub_df["id"] == selected_sub_id].iloc[0]
-
-        st.write(f"Editing Submission **ID {selected_sub_id}**")
-        st.write(f"Creator: **{sub_row['tiktok_id']} ({sub_row['full_name']})**")
-        st.write(f"Agency: **{sub_row['agency_name']}**")
-        st.write(f"Link: {sub_row['link_post']}")
-
-        status_df = fetch_status_map()
-
-        # Determine default index for status dropdown
-        if not status_df.empty and sub_row["status_id"] in status_df["id"].values:
-            default_status_index = status_df.index[status_df["id"] == sub_row["status_id"]][0]
-        else:
-            default_status_index = 0
-
-        with st.form("edit_submission_form"):
-
-            status_choice = st.selectbox(
+    # ---------- EDITABLE TABLE (IN EXPANDER) ----------
+    with st.expander("✏️ Edit Submissions (Status & Reason)", expanded=False):
+        st.write("**Instructions:** Edit the Status or Reason columns below, then click **Apply Changes** to save.")
+        
+        # Select columns for editing (same as view, but we'll make some editable)
+        edit_columns = [
+            "id", 
+            "tiktok_id", 
+            "full_name",
+            "posting_date", 
+            "link_post", 
+            "status_name", 
+            "reason"
+        ]
+        
+        edit_df = filtered_sub_df[edit_columns].copy()
+        
+        # Fill NaN values in 'reason' column with empty strings for editing
+        edit_df["reason"] = edit_df["reason"].fillna("")
+        
+        # Configure column settings for the editable table
+        edit_column_config = {
+            "id": st.column_config.NumberColumn(
+                "ID", 
+                disabled=True, 
+                width="small"
+            ),
+            "tiktok_id": st.column_config.TextColumn(
+                "TikTok ID", 
+                disabled=True, 
+                width="medium"
+            ),
+            "full_name": st.column_config.TextColumn(
+                "Full Name", 
+                disabled=True, 
+                width="medium"
+            ),
+            "posting_date": st.column_config.DateColumn(
+                "Posting Date", 
+                disabled=True, 
+                width="small"
+            ),
+            "link_post": st.column_config.LinkColumn(
+                "Post Link", 
+                disabled=True, 
+                width="medium",
+                display_text="🔗 View"
+            ),
+            "status_name": st.column_config.SelectboxColumn(
                 "Status",
-                options=status_df.index,
-                format_func=lambda i: status_df.loc[i, "status_name"],
-                index=default_status_index,
-            )
-            new_status_id = int(status_df.loc[status_choice, "id"])
+                options=status_options,
+                required=True,
+                width="medium",
+                help="Change the submission status"
+            ),
+            "reason": st.column_config.TextColumn(
+                "Reason",
+                help="Explain why you changed the status (max 500 chars)",
+                max_chars=500,
+                width="large"
+            ),
+        }
+        
+        # Display editable table
+        edited_df = st.data_editor(
+            edit_df,
+            column_config=edit_column_config,
+            use_container_width=True,
+            num_rows="fixed",
+            hide_index=True,
+            key="content_submissions_editor"
+        )
 
-            # Level (optional integer)
-            level_raw = sub_row["level"]
-            if level_raw is None or pd.isna(level_raw):
-                level_default = 0
-            else:
+        # Apply Changes Button
+        col_button, col_spacer = st.columns([1, 3])
+        
+        with col_button:
+            apply_button = st.button("💾 Apply Changes", type="primary", use_container_width=True)
+        
+        if apply_button:
+            # Detect changes by comparing original and edited dataframes
+            changes = []
+            
+            for idx in edited_df.index:
+                original_status = edit_df.loc[idx, "status_name"]
+                edited_status = edited_df.loc[idx, "status_name"]
+                
+                original_reason = edit_df.loc[idx, "reason"]
+                edited_reason = edited_df.loc[idx, "reason"]
+                
+                # Check if status or reason changed
+                if original_status != edited_status or original_reason != edited_reason:
+                    # Map status_name back to status_id
+                    status_id = int(status_df[status_df["status_name"] == edited_status]["id"].values[0])
+                    
+                    changes.append({
+                        "id": int(edited_df.loc[idx, "id"]),
+                        "status_id": status_id,
+                        "reason": edited_reason if edited_reason.strip() else None
+                    })
+            
+            if changes:
                 try:
-                    level_default = int(level_raw)
-                except Exception:
-                    level_default = 0
-
-            new_level = st.number_input(
-                "Level (optional)",
-                min_value=0,
-                step=1,
-                value=level_default,
-            )
-
-            new_notes = st.text_area(
-                "Notes",
-                value=sub_row["notes"] if sub_row["notes"] else "",
-            )
-
-            submit_sub_edit = st.form_submit_button("Apply Changes")
-
-        if submit_sub_edit:
-            updated_sub_fields = {}
-
-            if sub_row["status_id"] != new_status_id:
-                updated_sub_fields["status_id"] = new_status_id
-
-            # store None if 0
-            level_value = None if new_level == 0 else new_level
-            if sub_row["level"] != level_value:
-                updated_sub_fields["level"] = level_value
-
-            new_notes_clean = new_notes if new_notes.strip() else None
-            if sub_row["notes"] != new_notes_clean:
-                updated_sub_fields["notes"] = new_notes_clean
-
-            if updated_sub_fields:
-                try:
-                    update_content_submission_row(selected_sub_id, updated_sub_fields)
-                    st.success("Submission updated successfully! ✅")
-                    st.info("Refresh the page to see updated values in the table above.")
+                    bulk_update_content_submissions(changes)
+                    st.success(f"✅ Successfully updated **{len(changes)}** submission(s)!")
+                    st.info("🔄 Refreshing data...")
+                    
+                    # Clear cache to force refresh
+                    st.cache_data.clear()
+                    
+                    # Rerun to show updated data
+                    st.rerun()
+                    
                 except Exception as e:
-                    st.error(f"Error updating submission: {e}")
+                    st.error(f"❌ Error updating submissions: {e}")
+                    st.info("💡 Try refreshing the page or check your database connection.")
             else:
-                st.info("No changes detected.")
+                st.info("ℹ️ No changes detected. Edit the Status or Reason columns to make updates.")

@@ -10,7 +10,7 @@ from psycopg2.extras import RealDictCursor
 def get_connection():
     conn = psycopg2.connect(
         host=os.getenv("PG_HOST", "localhost"),
-        port=os.getenv("PG_PORT", "5432"),
+        port=os.getenv("PG_PORT", "5433"),
         dbname=os.getenv("PG_DB", "adtree"),
         user=os.getenv("PG_USER", "postgres"),
         password=os.getenv("PG_PASSWORD", "4dtr33"),
@@ -18,7 +18,81 @@ def get_connection():
     )
     return conn
 
-
+def bulk_update_content_submissions(updates: list):
+    """
+    Bulk update content_submissions for status_id and reason.
+    
+    This function updates multiple rows at once, which is more efficient
+    than calling update_content_submission_row() in a loop.
+    
+    Args:
+        updates: List of dicts, each containing:
+            - id: Submission ID to update
+            - status_id: New status ID (must match status_map table)
+            - reason: New reason text (can be None for empty)
+    
+    Example:
+        updates = [
+            {"id": 10, "status_id": 2, "reason": "Pending review"},
+            {"id": 15, "status_id": 3, "reason": "Low engagement"},
+        ]
+        bulk_update_content_submissions(updates)
+    
+    Raises:
+        Exception: If database connection fails or SQL execution errors occur
+    """
+    if not updates:
+        # Nothing to update
+        return
+    
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # Process each update
+                for update in updates:
+                    cur.execute(
+                        """
+                        UPDATE public.content_submissions
+                        SET status_id = %(status_id)s,
+                            reason = %(reason)s
+                        WHERE id = %(id)s
+                        """,
+                        update
+                    )
+                # Commit happens automatically when exiting the 'with conn:' block
+    except Exception as e:
+        # Re-raise with more context
+        raise Exception(f"Failed to bulk update submissions: {str(e)}")
+    finally:
+        conn.close()
+def bulk_update_content_submissions(updates: list):
+    """
+    Bulk update content_submissions for status_id and reason.
+    
+    Args:
+        updates: List of dicts, each with keys: id, status_id, reason
+        Example: [{"id": 10, "status_id": 2, "reason": "Pending review"}]
+    """
+    if not updates:
+        return
+    
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                for update in updates:
+                    cur.execute(
+                        """
+                        UPDATE public.content_submissions
+                        SET status_id = %(status_id)s,
+                            reason = %(reason)s
+                        WHERE id = %(id)s
+                        """,
+                        update
+                    )
+    finally:
+        conn.close()
 # =====================================================
 # HELPER: GET AGENCY ID FROM agency_map
 # =====================================================
@@ -203,5 +277,33 @@ def update_creator_registry_row(row_id, updated_fields):
         with conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
+    finally:
+        conn.close()
+
+def bulk_update_content_submissions(updates: list):
+    """
+    Bulk update content_submissions for status_id and reason.
+    
+    Args:
+        updates: List of dicts, each with keys: id, status_id, reason
+        Example: [{"id": 10, "status_id": 2, "reason": "Pending review"}]
+    """
+    if not updates:
+        return
+    
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                for update in updates:
+                    cur.execute(
+                        """
+                        UPDATE public.content_submissions
+                        SET status_id = %(status_id)s,
+                            reason = %(reason)s
+                        WHERE id = %(id)s
+                        """,
+                        update
+                    )
     finally:
         conn.close()
