@@ -120,7 +120,7 @@ def insert_submission(data: dict):
 
 def main():
 
-    st.title("Creator Content Submission Form")
+    st.title("Creator Content Submission Form V2")
 
     creators_df = load_creator_registry()
     category_df = load_category_map()
