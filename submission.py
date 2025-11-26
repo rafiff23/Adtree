@@ -6,22 +6,38 @@ from datetime import date
 from db import get_connection
 
 
+# ===========================
+# DB CONNECTION WRAPPER
+# ===========================
 @st.cache_resource
 def get_conn():
+    """
+    Wrap db.get_connection() with Streamlit cache.
+    db.get_connection() is your single source of truth
+    for host/port/user/password.
+    """
     return get_connection()
 
 
+# ===========================
+# DATA LOADERS
+# ===========================
 @st.cache_data(ttl=60)
-def load_creator_registry():
+def load_creator_registry() -> pd.DataFrame:
+    """
+    Load creator list used in the dropdown.
+    """
     conn = get_conn()
 
+    # Safely rollback any open transaction
     try:
         conn.rollback()
-    except:
+    except Exception:
         pass
 
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT 
                 cr.id,
                 cr.tiktok_id,
@@ -32,10 +48,43 @@ def load_creator_registry():
             LEFT JOIN public.agency_map am
                 ON cr.agency_id = am.id
             ORDER BY cr.tiktok_id;
-        """)
+            """
+        )
         rows = cur.fetchall()
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(
+        rows,
+        columns=["id", "tiktok_id", "full_name", "agency_id", "agency_name"],
+    )
+    return df
+
+
+@st.cache_data
+def load_category_map() -> pd.DataFrame:
+    """
+    Load category map (excluding id=4).
+    """
+    conn = get_conn()
+
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, category_name
+            FROM public.category_map
+            WHERE id != 4
+            ORDER BY id;
+            """
+        )
+        rows = cur.fetchall()
+
+    df = pd.DataFrame(rows, columns=["id", "category_name"])
+    return df
+
 
 def is_link_already_submitted(link_post: str) -> bool:
     """
@@ -53,38 +102,25 @@ def is_link_already_submitted(link_post: str) -> bool:
             WHERE TRIM(link_post) = TRIM(%s)
             LIMIT 1;
             """,
-            (link_post,)
+            (link_post,),
         )
         return cur.fetchone() is not None
 
 
-@st.cache_data
-def load_category_map():
-    conn = get_conn()
-
-    try:
-        conn.rollback()
-    except:
-        pass
-
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT id, category_name
-            FROM public.category_map
-            WHERE id != 4
-            ORDER BY id;
-        """)
-        rows = cur.fetchall()
-
-    return pd.DataFrame(rows)
-
-
+# ===========================
+# INSERT HELPER
+# ===========================
 def insert_submission(data: dict):
+    """
+    Insert 1 row into public.content_submissions.
+    Assumes 'reason' column exists and is nullable.
+    """
     conn = get_conn()
 
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO public.content_submissions (
                     submission_date,
                     creator_id,
@@ -111,7 +147,9 @@ def insert_submission(data: dict):
                     %(notes)s,
                     %(reason)s
                 );
-            """, data)
+                """,
+                data,
+            )
 
         conn.commit()
 
@@ -120,23 +158,33 @@ def insert_submission(data: dict):
         raise e
 
 
+# ===========================
+# MAIN APP
+# ===========================
 def main():
-
-    st.title("Creator Content Submission Form V2")
+    st.title("Creator Content Submission Form V3")
 
     creators_df = load_creator_registry()
     category_df = load_category_map()
+
+    if creators_df.empty:
+        st.error("No creators found in creator_registry. Please add creators first.")
+        return
+
+    if category_df.empty:
+        st.error("No categories found in category_map. Please configure categories first.")
+        return
 
     # ===========================
     # FORM START
     # ===========================
     with st.form("submission_form"):
 
-        # Submission date
+        # Submission date (auto, locked)
         submission_date = st.date_input(
             "Submission Date",
             value=date.today(),
-            disabled=True
+            disabled=True,
         )
 
         # Creator Dropdown
@@ -147,30 +195,34 @@ def main():
                 f"{creators_df.loc[i, 'tiktok_id']} "
                 f"({creators_df.loc[i, 'full_name']}) – "
                 f"{creators_df.loc[i, 'agency_name']}"
-            )
+            ),
         )
 
         selected = creators_df.loc[creator_choice]
         creator_id = int(selected["id"])
         raw_agency = selected["agency_id"]
+
         # Handle NULL agency_id safely
         if pd.isna(raw_agency) or raw_agency is None:
-            management_id = None   # or 0 if your DB requires integer
+            management_id = None   # set to None; DB column should allow NULL
         else:
             management_id = int(raw_agency)
-
 
         st.write(f"**Full Name:** {selected['full_name']}")
         st.write(f"**Agency:** {selected['agency_name']}")
 
-        # Posting date
-        posting_date = st.date_input("Posting Date", value= date.today(), disabled=True)
+        # Posting date (auto, locked)
+        posting_date = st.date_input(
+            "Posting Date",
+            value=date.today(),
+            disabled=True,
+        )
 
-        # Category
+        # Category dropdown
         category_choice = st.selectbox(
             "Category:",
             options=category_df.index,
-            format_func=lambda i: category_df.loc[i, "category_name"]
+            format_func=lambda i: category_df.loc[i, "category_name"],
         )
         category_id = int(category_df.loc[category_choice, "id"])
 
@@ -179,43 +231,38 @@ def main():
             "Jenis Postingan:",
             [
                 "Foto Slide Normal Posting",
-                "Video Normal Posting"
-            ]
+                "Video Normal Posting",
+            ],
         )
 
-        # Link field
+        # TikTok Link
         link_post = st.text_input("TikTok Post Link:")
 
         if link_post and "tiktok" not in link_post.lower():
             st.warning("⚠️ TikTok link must contain 'tiktok'")
 
-        # Hidden fields
+        # Hidden / default fields
         status_id = 1
         notes = ""
-        reason = ""
-        level = None
+        reason = ""   # you can later turn this into a text_area if needed
+        level = None  # fill later when you have logic
 
-        # ===========================
-        # SUBMIT BUTTON **INSIDE FORM**
-        # ===========================
+        # Submit button
         submitted = st.form_submit_button("Save")
 
-    # ===========================
-    # AFTER FORM SUBMISSION
-    # ===========================
     # ===========================
     # AFTER FORM SUBMISSION
     # ===========================
     if submitted:
         clean_link = (link_post or "").strip()
 
-        # 1. Basic validation: required + must contain 'tiktok'
+        # 1. Basic validation
         if not clean_link:
             st.error("❌ TikTok link is required.")
         elif "tiktok" not in clean_link.lower():
             st.error("❌ Invalid TikTok link. Must contain 'tiktok'")
 
-        # 2. Duplicate validation against DB
+        # 2. Duplicate check
         elif is_link_already_submitted(clean_link):
             st.error("❌ This TikTok link is duplicate and has already been submitted.")
 
@@ -228,7 +275,7 @@ def main():
                 "posting_date": posting_date,
                 "category_id": category_id,
                 "post_type": post_type,
-                "link_post": clean_link,  # store cleaned link
+                "link_post": clean_link,  # cleaned link
                 "level": level,
                 "status_id": status_id,
                 "notes": notes,
@@ -237,7 +284,6 @@ def main():
 
             insert_submission(payload)
             st.success("✅ Submission saved successfully!")
-
 
 
 if __name__ == "__main__":

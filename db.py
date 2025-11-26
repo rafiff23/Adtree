@@ -66,33 +66,34 @@ def bulk_update_content_submissions(updates: list):
         raise Exception(f"Failed to bulk update submissions: {str(e)}")
     finally:
         conn.close()
-def bulk_update_content_submissions(updates: list):
-    """
-    Bulk update content_submissions for status_id and reason.
+        
+# def bulk_update_content_submissions(updates: list):
+#     """
+#     Bulk update content_submissions for status_id and reason.
     
-    Args:
-        updates: List of dicts, each with keys: id, status_id, reason
-        Example: [{"id": 10, "status_id": 2, "reason": "Pending review"}]
-    """
-    if not updates:
-        return
+#     Args:
+#         updates: List of dicts, each with keys: id, status_id, reason
+#         Example: [{"id": 10, "status_id": 2, "reason": "Pending review"}]
+#     """
+#     if not updates:
+#         return
     
-    conn = get_connection()
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                for update in updates:
-                    cur.execute(
-                        """
-                        UPDATE public.content_submissions
-                        SET status_id = %(status_id)s,
-                            reason = %(reason)s
-                        WHERE id = %(id)s
-                        """,
-                        update
-                    )
-    finally:
-        conn.close()
+#     conn = get_connection()
+#     try:
+#         with conn:
+#             with conn.cursor() as cur:
+#                 for update in updates:
+#                     cur.execute(
+#                         """
+#                         UPDATE public.content_submissions
+#                         SET status_id = %(status_id)s,
+#                             reason = %(reason)s
+#                         WHERE id = %(id)s
+#                         """,
+#                         update
+#                     )
+#     finally:
+#         conn.close()
 # =====================================================
 # HELPER: GET AGENCY ID FROM agency_map
 # =====================================================
