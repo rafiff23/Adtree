@@ -37,26 +37,6 @@ def load_creator_registry():
 
     return pd.DataFrame(rows)
 
-def is_link_already_submitted(link_post: str) -> bool:
-    """
-    Return True if the given TikTok link already exists in content_submissions.
-    """
-    if not link_post:
-        return False
-
-    conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT 1
-            FROM public.content_submissions
-            WHERE TRIM(link_post) = TRIM(%s)
-            LIMIT 1;
-            """,
-            (link_post,)
-        )
-        return cur.fetchone() is not None
-
 
 @st.cache_data
 def load_category_map():
@@ -120,7 +100,7 @@ def insert_submission(data: dict):
 
 def main():
 
-    st.title("Creator Content Submission Form V2")
+    st.title("Creator Content Submission Form")
 
     creators_df = load_creator_registry()
     category_df = load_category_map()
@@ -200,23 +180,10 @@ def main():
     # ===========================
     # AFTER FORM SUBMISSION
     # ===========================
-    # ===========================
-    # AFTER FORM SUBMISSION
-    # ===========================
     if submitted:
-        clean_link = (link_post or "").strip()
-
-        # 1. Basic validation: required + must contain 'tiktok'
-        if not clean_link:
-            st.error("❌ TikTok link is required.")
-        elif "tiktok" not in clean_link.lower():
+        if "tiktok" not in link_post.lower():
             st.error("❌ Invalid TikTok link. Must contain 'tiktok'")
 
-        # 2. Duplicate validation against DB
-        elif is_link_already_submitted(clean_link):
-            st.error("❌ This TikTok link is duplicate and has already been submitted.")
-
-        # 3. All good → insert
         else:
             payload = {
                 "submission_date": submission_date,
@@ -225,7 +192,7 @@ def main():
                 "posting_date": posting_date,
                 "category_id": category_id,
                 "post_type": post_type,
-                "link_post": clean_link,  # store cleaned link
+                "link_post": link_post,
                 "level": level,
                 "status_id": status_id,
                 "notes": notes,
@@ -233,7 +200,6 @@ def main():
 
             insert_submission(payload)
             st.success("✅ Submission saved successfully!")
-
 
 
 if __name__ == "__main__":
