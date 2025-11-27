@@ -143,15 +143,30 @@ def render():
                 st.error("UID must contain numbers only when filled.")
                 return
 
-            if phone_new.startswith("+") or phone_new.startswith("62"):
-                st.error("Do NOT include +62 or 62. Only the remaining number.")
-                return
+            # if phone_new.startswith("+") or phone_new.startswith("62"):
+            #     st.error("Do NOT include +62 or 62. Only the remaining number.")
+            #     return
 
-            if not phone_new.isdigit():
-                st.error("Phone number must contain digits only.")
-                return
+            # if not phone_new.isdigit():
+            #     st.error("Phone number must contain digits only.")
+            #     return
 
-            phone_final = f"+62{phone_new}"
+            phone_clean = phone_new or ""
+            # Allow blank
+            if phone_clean:
+                # Validate only if filled
+                if phone_clean.startswith("+") or phone_clean.startswith("62"):
+                    st.error("Do NOT include +62 or 62. Only the remaining number.")
+                    return
+
+                if not phone_clean.isdigit():
+                    st.error("Phone number must contain digits only when filled.")
+                    return
+
+            # Build final DB value
+            phone_final = f"+62{phone_clean}" if phone_clean else None
+
+            # phone_final = f"+62{phone_new}"
 
             updated_fields = {}
 
