@@ -101,7 +101,7 @@ def render():
 
             full_name_new = st.text_input("Full Name", value=row["full_name"])
             domicile_new = st.text_input("Domicile", value=row["domicile"])
-            uid_new = st.text_input("UID", value=row["uid"])
+            uid_new = st.text_input("UID", value=row["uid"] or "")
 
             st.write("Phone Number")
             col_code, col_num = st.columns([1, 3])
@@ -138,6 +138,7 @@ def render():
             submit_edit = st.form_submit_button("Apply Changes")
 
         if submit_edit:
+            uid_clean = uid_new or ""
             if not uid_new.isdigit():
                 st.error("UID must contain numbers only.")
                 return
