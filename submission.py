@@ -2,8 +2,40 @@
 
 import streamlit as st
 import pandas as pd
+import datetime as dt
 from datetime import date
-from db import get_connection
+from db import (
+    get_connection,
+    insert_creator_registry_row,
+)
+
+
+# ===========================
+# PAGE CONFIG
+# ===========================
+st.set_page_config(page_title="Content Submission & Creator Registry", layout="wide")
+
+
+# ===========================
+# CONSTANTS
+# ===========================
+AGENCY_OPTIONS = [
+    "Adtree Digital Indonesia",
+    "Golden Maker",
+    "WH Management",
+    "TB Management",
+    "BTC Management",
+    "HM Agency",
+]
+
+
+# ===========================
+# SIDEBAR NAVIGATION
+# ===========================
+page = st.sidebar.radio(
+    "Navigation",
+    ["Content Submission Form", "Creator Registry"],
+)
 
 
 # ===========================
@@ -108,7 +140,7 @@ def is_link_already_submitted(link_post: str) -> bool:
 
 
 # ===========================
-# INSERT HELPER
+# INSERT HELPER FOR SUBMISSIONS
 # ===========================
 def insert_submission(data: dict):
     """
@@ -158,10 +190,10 @@ def insert_submission(data: dict):
         raise e
 
 
-# ===========================
-# MAIN APP
-# ===========================
-def main():
+# =================================================
+# PAGE 1: CONTENT SUBMISSION FORM
+# =================================================
+if page == "Content Submission Form":
     st.title("Creator Content Submission Form V3")
 
     creators_df = load_creator_registry()
@@ -169,11 +201,11 @@ def main():
 
     if creators_df.empty:
         st.error("No creators found in creator_registry. Please add creators first.")
-        return
+        st.stop()
 
     if category_df.empty:
         st.error("No categories found in category_map. Please configure categories first.")
-        return
+        st.stop()
 
     # ===========================
     # FORM START
@@ -193,7 +225,7 @@ def main():
             options=creators_df.index,
             format_func=lambda i: (
                 f"{creators_df.loc[i, 'tiktok_id']} "
-                f"({creators_df.loc[i, 'full_name']}) – "
+                f"({creators_df.loc[i, 'full_name']}) — "
                 f"{creators_df.loc[i, 'agency_name']}"
             ),
         )
@@ -222,7 +254,7 @@ def main():
         category_choice = st.selectbox(
             "Category:",
             options=category_df.index,
-            format_func=lambda i: category_df.loc[i, "category_name"],
+            format_func=lambda i: category_df.loc[category_choice, "category_name"],
         )
         category_id = int(category_df.loc[category_choice, "id"])
 
@@ -282,9 +314,162 @@ def main():
                 "reason": reason,
             }
 
-            insert_submission(payload)
-            st.success("✅ Submission saved successfully!")
+            try:
+                insert_submission(payload)
+                st.success("✅ Submission saved successfully!")
+                
+                # Clear cache to refresh creator list if needed
+                st.cache_data.clear()
+                
+            except Exception as e:
+                st.error(f"❌ Error saving submission: {e}")
 
 
-if __name__ == "__main__":
-    main()
+# =================================================
+# PAGE 2: CREATOR REGISTRY
+# =================================================
+elif page == "Creator Registry":
+    st.title("Creator Registry")
+    st.write("Register new creators into the system.")
+
+    today = dt.date.today()
+    month_label = today.strftime("%Y-%m")
+    binding_status = "Unbound"      # default, can be changed later
+    onboarding_date = None          # will be set when Bound later
+
+    with st.form("creator_registry_form", clear_on_submit=True):
+        agency_name = st.selectbox("Agency Name", AGENCY_OPTIONS)
+
+        col_tid, col_followers = st.columns([2, 1])
+
+        with col_tid:
+            tiktok_id = st.text_input(
+                "TikTok ID (without @)",
+                placeholder="rforramaaa",
+                help="Cannot start with @ and cannot contain spaces.",
+            )
+
+        with col_followers:
+            followers = st.number_input(
+                "Followers (optional)",
+                min_value=0,
+                step=1,
+                help="Exact follower count if known. Leave as 0 if unknown.",
+            )
+
+        full_name = st.text_input("Full Name")
+        domicile = st.text_input("Domicile (City / Country)")
+        uid = st.text_input("UID (numbers only)")
+
+        # Phone number input (after +62)
+        st.write("Phone Number")
+        col_code, col_number = st.columns([1, 3])
+
+        with col_code:
+            st.text_input(
+                "Code",
+                value="+62",
+                disabled=True,
+                label_visibility="collapsed",
+            )
+
+        with col_number:
+            phone_rest = st.text_input(
+                "Phone Number (without +62 or 62)",
+                placeholder="81234567890",
+                label_visibility="collapsed",
+                help="Do NOT type +62 or 62 here. It is already added.",
+            )
+
+        notes = st.text_area("Notes (optional)", height=80)
+
+        # Binding status (display only for now)
+        st.text_input(
+            "Binding Status",
+            value=binding_status,
+            disabled=True,
+            help="This will be updated when the creator is Bound.",
+        )
+
+        submitted = st.form_submit_button("Save Creator")
+
+        if submitted:
+            # ---------- VALIDATIONS ----------
+            if not agency_name:
+                st.error("Agency Name is required.")
+                st.stop()
+
+            if not tiktok_id:
+                st.error("TikTok ID cannot be empty.")
+                st.stop()
+
+            if tiktok_id.startswith("@"):
+                st.error("TikTok ID must NOT start with '@'. Please remove it.")
+                st.stop()
+
+            if " " in tiktok_id:
+                st.error("TikTok ID must NOT contain spaces.")
+                st.stop()
+
+            if not full_name.strip():
+                st.error("Full Name is required.")
+                st.stop()
+
+            if not domicile.strip():
+                st.error("Domicile is required.")
+                st.stop()
+
+            if not uid.strip():
+                st.error("UID is required.")
+                st.stop()
+
+            if not uid.isdigit():
+                st.error("UID must contain numbers only.")
+                st.stop()
+
+            if not phone_rest.strip():
+                st.error("Phone number cannot be empty.")
+                st.stop()
+
+            if phone_rest.startswith("+") or phone_rest.startswith("62"):
+                st.error("Do NOT type +62 or 62 in the phone field. Only the remaining number, e.g. 8123xxxx.")
+                st.stop()
+
+            if not phone_rest.isdigit():
+                st.error("Phone number (after +62) must contain only digits.")
+                st.stop()
+
+            phone_number = f"+62{phone_rest}"
+
+            # Build TikTok link automatically
+            tiktok_link = f"https://www.tiktok.com/@{tiktok_id}"
+
+            # Followers: optional -> treat 0 as None if you prefer
+            followers_value = int(followers) if followers > 0 else None
+
+            # Insert into DB
+            try:
+                new_id = insert_creator_registry_row(
+                    agency_name=agency_name,
+                    tiktok_id=tiktok_id,
+                    followers=followers_value,
+                    full_name=full_name,
+                    domicile=domicile,
+                    uid=uid,
+                    phone_number=phone_number,
+                    tiktok_link=tiktok_link,
+                    binding_status=binding_status,
+                    onboarding_date=onboarding_date,
+                    month_label=month_label,
+                    notes=notes or None,
+                )
+                
+                st.success(f"Creator saved successfully with ID {new_id} ✅")
+                st.info(f"TikTok Link: {tiktok_link}")
+                st.info(f"Phone stored as: {phone_number}")
+                
+                # Clear cache so new creator shows up in dropdown immediately
+                st.cache_data.clear()
+                
+            except Exception as e:
+                st.error(f"Error saving creator: {e}")
