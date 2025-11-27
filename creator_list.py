@@ -139,8 +139,8 @@ def render():
 
         if submit_edit:
             uid_clean = uid_new or ""
-            if not uid_new.isdigit():
-                st.error("UID must contain numbers only.")
+            if uid_clean and not uid_clean.isdigit():
+                st.error("UID must contain numbers only when filled.")
                 return
 
             if phone_new.startswith("+") or phone_new.startswith("62"):
@@ -164,6 +164,7 @@ def render():
             check_change("followers", followers_new if followers_new > 0 else None)
             check_change("full_name", full_name_new)
             check_change("domicile", domicile_new)
+            updated_uid = uid_clean if uid_clean else None
             check_change("uid", uid_new)
             check_change("phone_number", phone_final)
             check_change("tiktok_link", tiktok_link_new)
