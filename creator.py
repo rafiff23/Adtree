@@ -136,6 +136,7 @@ def fetch_status_map():
     sql = """
         SELECT id, status_name
         FROM public.status_map
+        WHERE id != 1 
         ORDER BY id;
     """
     try:
