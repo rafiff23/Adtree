@@ -242,7 +242,7 @@ def main():
             st.warning("⚠️ TikTok link must contain 'tiktok'")
 
         # Hidden / default fields
-        status_id = 1
+        status_id = ""
         notes = ""
         reason = ""   # you can later turn this into a text_area if needed
         level = None  # fill later when you have logic
