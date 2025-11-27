@@ -492,14 +492,46 @@ elif page == "Creator List":
 
 
 # =================================================
-# PAGE 3: CONTENT SUBMISSIONS (VIEW + EDIT)
+# PAGE 3: CONTENT SUBMISSIONS (VIEW + EDIT WITH LOCK)
 # =================================================
 elif page == "Content Submissions":
     st.title("Content Submissions")
-    st.write("Monitor submissions with the read-only table below. Need to update statuses? Open the **Edit Submissions** expander.")
+    
+    # ============ EDITING MODE TOGGLE ============
+    col_title, col_toggle = st.columns([3, 1])
+    
+    with col_title:
+        st.write("Monitor submissions with the read-only table below. Need to update statuses? Open the **Edit Submissions** expander and toggle the lock.")
+    
+    with col_toggle:
+        # Initialize editing mode in session state if it doesn't exist
+        if "editing_mode" not in st.session_state:
+            st.session_state.editing_mode = False
+        
+        editing_mode = st.toggle(
+            "🔒 Lock Data",
+            value=st.session_state.editing_mode,
+            help="Turn this ON before editing to prevent auto-refresh. Turn OFF when done to see new submissions.",
+            key="editing_mode_toggle"
+        )
+        st.session_state.editing_mode = editing_mode
+    
+    # Show warning when editing mode is active
+    if st.session_state.editing_mode:
+        st.warning("⚠️ **Editing Mode Active:** Data is locked and won't auto-refresh. Click 'Apply Changes' when done, and the lock will automatically turn off.")
+    # =============================================
 
-    # Fetch data
-    submissions_rows = fetch_content_submissions()
+    # Fetch data with conditional caching based on editing mode
+    if st.session_state.editing_mode:
+        # In editing mode: use cached data (prevents refresh)
+        @st.cache_data
+        def fetch_locked_submissions():
+            return fetch_content_submissions()
+        submissions_rows = fetch_locked_submissions()
+    else:
+        # Normal mode: fresh data every time (allows auto-refresh)
+        submissions_rows = fetch_content_submissions()
+    
     if not submissions_rows:
         st.info("No content submissions available.")
         st.stop()
@@ -508,7 +540,7 @@ elif page == "Content Submissions":
     sub_df["submission_date"] = pd.to_datetime(sub_df["submission_date"]).dt.normalize()
     sub_df["posting_date"] = pd.to_datetime(sub_df["posting_date"]).dt.date
 
-    # Fetch status map for dropdown options (needed for editable section)
+    # Fetch status map for dropdown options
     status_df = fetch_status_map()
     status_options = status_df["status_name"].tolist()
 
@@ -557,7 +589,7 @@ elif page == "Content Submissions":
         "tiktok_id", 
         "agency_name", 
         "posting_date", 
-        "category_name",  # Using category_name instead of category_id for readability
+        "category_name",
         "post_type", 
         "link_post", 
         "level", 
@@ -568,8 +600,8 @@ elif page == "Content Submissions":
     view_df = filtered_sub_df[view_columns].copy()
     
     # Fill NaN values for prettier display
-    view_df["reason"] = view_df["reason"].fillna("—")  # Em dash for empty reasons
-    view_df["level"] = view_df["level"].fillna(0).astype(int)  # Convert level to integer
+    view_df["reason"] = view_df["reason"].fillna("—")
+    view_df["level"] = view_df["level"].fillna(0).astype(int)
     view_df["category_name"] = view_df["category_name"].fillna("Uncategorized")
     
     # Configure pretty column display
@@ -641,9 +673,14 @@ elif page == "Content Submissions":
 
     # ---------- EDITABLE TABLE (IN EXPANDER) ----------
     with st.expander("✏️ Edit Submissions (Status & Reason)", expanded=False):
+        
+        # Reminder to use the lock
+        if not st.session_state.editing_mode:
+            st.info("💡 **Tip:** Turn on the '🔒 Lock Data' toggle above before editing to prevent losing your work if new submissions arrive.")
+        
         st.write("**Instructions:** Edit the Status or Reason columns below, then click **Apply Changes** to save.")
         
-        # Select columns for editing (same as view, but we'll make some editable)
+        # Select columns for editing
         edit_columns = [
             "id", 
             "tiktok_id", 
@@ -712,6 +749,18 @@ elif page == "Content Submissions":
             key="content_submissions_editor"
         )
 
+        # Detect if there are unsaved changes
+        changes_detected = False
+        for idx in edited_df.index:
+            if (edit_df.loc[idx, "status_name"] != edited_df.loc[idx, "status_name"] or 
+                edit_df.loc[idx, "reason"] != edited_df.loc[idx, "reason"]):
+                changes_detected = True
+                break
+        
+        # Show warning if there are unsaved changes
+        if changes_detected:
+            st.warning("⚠️ **You have unsaved changes!** Click 'Apply Changes' below to save them to the database.")
+
         # Apply Changes Button
         col_button, col_spacer = st.columns([1, 3])
         
@@ -744,7 +793,12 @@ elif page == "Content Submissions":
                 try:
                     bulk_update_content_submissions(changes)
                     st.success(f"✅ Successfully updated **{len(changes)}** submission(s)!")
-                    st.info("🔄 Refreshing data...")
+                    
+                    # ============ AUTO-DISABLE EDITING MODE ============
+                    st.session_state.editing_mode = False
+                    # ===================================================
+                    
+                    st.info("🔄 Refreshing data... The lock has been turned off automatically.")
                     
                     # Clear cache to force refresh
                     st.cache_data.clear()
