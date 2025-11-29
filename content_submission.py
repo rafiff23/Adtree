@@ -138,7 +138,7 @@ def render():
     # ---------- FILTERS ----------
     st.subheader("Filters")
     
-    filter_col1, filter_col2 = st.columns(2)
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
     
     with filter_col1:
         tiktok_ids = ["(Show All)"] + sorted(sub_df["tiktok_id"].dropna().unique())
@@ -147,6 +147,11 @@ def render():
     with filter_col2:
         min_posting_date = sub_df["posting_date"].min()
         max_posting_date = sub_df["posting_date"].max()
+
+    with filter_col3:
+        category_list = ["(Show All)"] + sorted(sub_df["category_name"].fillna("Uncategorized").unique())
+        category_filter = st.selectbox("Filter by Category", category_list)
+
         
         posting_date_range = st.date_input(
             "Filter by Posting Date Range",
@@ -168,6 +173,10 @@ def render():
             (filtered_sub_df["posting_date"] >= start_date) & 
             (filtered_sub_df["posting_date"] <= end_date)
         ]
+    # Category filter
+    if category_filter != "(Show All)":
+        filtered_sub_df = filtered_sub_df[filtered_sub_df["category_name"] == category_filter]
+
 
     # ---------- PRETTY VIEW-ONLY TABLE ----------
     st.subheader("📊 Submissions Overview (Read-Only)")
