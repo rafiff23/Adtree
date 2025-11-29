@@ -22,7 +22,4 @@ jobs:
           cd ~/apps/streamlit/Adtree
           git pull
           pkill -f "creator.py" || true
-          nohup ~/apps/streamlit/Adtree/venv/bin/streamlit run creator.py \
-              --server.address 0.0.0.0 \
-              --server.port 8501 \
-              > ~/apps/streamlit/Adtree/creator.log 2>&1 &
+          nohup ~/apps/streamlit/Adtree/venv/bin/streamlit run creator.py --server.address 0.0.0.0 --server.port 8501 &
