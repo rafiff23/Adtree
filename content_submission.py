@@ -136,23 +136,52 @@ def render():
     status_options = editable_status_df["status_name"].tolist()
 
     # ---------- FILTERS ----------
+    # st.subheader("Filters")
+    
+    # filter_col1, filter_col2, filter_col3 = st.columns(3)
+    
+    # with filter_col1:
+    #     tiktok_ids = ["(Show All)"] + sorted(sub_df["tiktok_id"].dropna().unique())
+    #     tiktok_filter = st.selectbox("Filter by TikTok ID", tiktok_ids)
+    
+    # with filter_col2:
+    #     min_posting_date = sub_df["posting_date"].min()
+    #     max_posting_date = sub_df["posting_date"].max()
+
+    # with filter_col3:
+    #     category_list = ["(Show All)"] + sorted(sub_df["category_name"].fillna("Uncategorized").unique())
+    #     category_filter = st.selectbox("Filter by Category", category_list)
+
+        
+    #     posting_date_range = st.date_input(
+    #         "Filter by Posting Date Range",
+    #         value=(min_posting_date, max_posting_date),
+    #         min_value=min_posting_date,
+    #         max_value=max_posting_date,
+    #         help="Select start and end dates"
+    #     )
+
     st.subheader("Filters")
-    
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
-    
-    with filter_col1:
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+
+    with col1:
         tiktok_ids = ["(Show All)"] + sorted(sub_df["tiktok_id"].dropna().unique())
         tiktok_filter = st.selectbox("Filter by TikTok ID", tiktok_ids)
-    
-    with filter_col2:
-        min_posting_date = sub_df["posting_date"].min()
-        max_posting_date = sub_df["posting_date"].max()
 
-    with filter_col3:
+    with col2:
         category_list = ["(Show All)"] + sorted(sub_df["category_name"].fillna("Uncategorized").unique())
         category_filter = st.selectbox("Filter by Category", category_list)
 
-        
+    with col3:
+        min_posting_date = sub_df["posting_date"].min()
+        max_posting_date = sub_df["posting_date"].max()
+
+        # 🚀 Force same height with a wrapper
+        st.markdown(
+            "<div style='margin-top: -8px; padding-top: 0px;'>",
+            unsafe_allow_html=True
+        )
         posting_date_range = st.date_input(
             "Filter by Posting Date Range",
             value=(min_posting_date, max_posting_date),
@@ -160,6 +189,7 @@ def render():
             max_value=max_posting_date,
             help="Select start and end dates"
         )
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # Apply filters
     filtered_sub_df = sub_df.copy()
