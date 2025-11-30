@@ -11,10 +11,56 @@ from db import (
 # HELPERS FOR CONTENT_SUBMISSIONS
 # =================================================
 
+# def fetch_content_submissions():
+#     """
+#     Fetch joined view for content_submissions:
+#     - joins creator_registry, agency_map, category_map, status_map
+#     """
+#     conn = get_connection()
+#     sql = """
+#         SELECT
+#             cs.id,
+#             cs.submission_date,
+#             cs.posting_date,
+#             cs.post_type,
+#             cs.link_post,
+#             cs.level,
+#             cs.notes,
+#             cs.reason,
+#             cs.creator_id,
+#             cr.tiktok_id,
+#             cr.full_name,
+#             cs.management_id,
+#             am.agency_name,
+#             cs.category_id,
+#             cat.category_name,
+#             cs.status_id,
+#             sm.status_name,
+#             cs.created_at
+#         FROM public.content_submissions cs
+#         LEFT JOIN public.creator_registry cr
+#             ON cs.creator_id = cr.id
+#         LEFT JOIN public.agency_map am
+#             ON cs.management_id = am.id
+#         LEFT JOIN public.category_map cat
+#             ON cs.category_id = cat.id
+#         LEFT JOIN public.status_map sm
+#             ON cs.status_id = sm.id
+#         ORDER BY cs.created_at DESC, cs.id DESC;
+#     """
+#     try:
+#         with conn:
+#             with conn.cursor() as cur:
+#                 cur.execute(sql)
+#                 rows = cur.fetchall()
+#         return rows
+#     finally:
+#         conn.close()
+
 def fetch_content_submissions():
     """
     Fetch joined view for content_submissions:
-    - joins creator_registry, agency_map, category_map, status_map
+    - joins creator_registry, agency_map (via creator), category_map, status_map
     """
     conn = get_connection()
     sql = """
@@ -30,8 +76,8 @@ def fetch_content_submissions():
             cs.creator_id,
             cr.tiktok_id,
             cr.full_name,
-            cs.management_id,
-            am.agency_name,
+            cs.management_id,          -- still keep original management_id if you need it
+            am.agency_name,            -- agency comes from CREATOR now
             cs.category_id,
             cat.category_name,
             cs.status_id,
@@ -41,7 +87,7 @@ def fetch_content_submissions():
         LEFT JOIN public.creator_registry cr
             ON cs.creator_id = cr.id
         LEFT JOIN public.agency_map am
-            ON cs.management_id = am.id
+            ON cr.agency_id = am.id      -- ✅ changed join: use creator.agency_id
         LEFT JOIN public.category_map cat
             ON cs.category_id = cat.id
         LEFT JOIN public.status_map sm
