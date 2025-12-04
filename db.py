@@ -130,62 +130,59 @@ def insert_creator_registry_row(
     month_label,
     notes,
 ):
-    # Convert agency_name → agency_id
-    agency_id = get_agency_id_by_name(agency_name)
-
-    sql = """
-        INSERT INTO public.creator_registry (
-            agency_id,
-            tiktok_id,
-            followers,
-            full_name,
-            domicile,
-            uid,
-            phone_number,
-            tiktok_link,
-            binding_status,
-            onboarding_date,
-            month_label,
-            notes
-        )
-        VALUES (
-            %(agency_id)s,
-            %(tiktok_id)s,
-            %(followers)s,
-            %(full_name)s,
-            %(domicile)s,
-            %(uid)s,
-            %(phone_number)s,
-            %(tiktok_link)s,
-            %(binding_status)s,
-            %(onboarding_date)s,
-            %(month_label)s,
-            %(notes)s
-        )
-        RETURNING id;
-    """
-
-    params = {
-        "agency_id": agency_id,
-        "tiktok_id": tiktok_id,
-        "followers": followers,
-        "full_name": full_name,
-        "domicile": domicile,
-        "uid": uid,
-        "phone_number": phone_number,
-        "tiktok_link": tiktok_link,
-        "binding_status": binding_status,
-        "onboarding_date": onboarding_date,
-        "month_label": month_label,
-        "notes": notes,
-    }
-
     conn = get_connection()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                new_id = cur.fetchone()["id"]
+        with conn.cursor() as cur:
+            # resolve agency_name -> agency_id
+            cur.execute(
+                "SELECT id FROM public.agency_map WHERE agency_name = %s LIMIT 1;",
+                (agency_name,),
+            )
+            row = cur.fetchone()
+            agency_id = row[0] if row else None
+
+            cur.execute(
+                """
+                INSERT INTO public.creator_registry (
+                    tiktok_id,
+                    followers,
+                    full_name,
+                    domicile,
+                    uid,
+                    phone_number,
+                    tiktok_link,
+                    binding_status,
+                    onboarding_date,
+                    month_label,
+                    notes,
+                    created_at,
+                    updated_at,
+                    agency_id
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    NOW(), NOW(), %s
+                )
+                RETURNING id;
+                """,
+                (
+                    tiktok_id,
+                    followers,
+                    full_name,
+                    domicile,
+                    uid,
+                    phone_number,
+                    tiktok_link,
+                    binding_status,
+                    onboarding_date,
+                    month_label,
+                    notes,
+                    agency_id,
+                ),
+            )
+            new_id = cur.fetchone()[0]
+        conn.commit()
         return new_id
     finally:
         conn.close()
