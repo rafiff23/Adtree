@@ -212,6 +212,7 @@ def render():
         "tiktok_id", 
         "agency_name", 
         "posting_date", 
+        "Time Submitted",
         "category_name",
         "post_type", 
         "link_post", 
