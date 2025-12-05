@@ -17,6 +17,7 @@ def fetch_content_submissions():
             cs.id,
             cs.submission_date,
             cs.posting_date,
+            cs.TO_CHAR(created_at, 'HH24:MI:SS') AS "Time Submitted",
             cs.post_type,
             cs.link_post,
             cr.level,
