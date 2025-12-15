@@ -3,7 +3,6 @@ import streamlit as st
 
 # Adjust import paths to match your project layout
 from db import (
-    get_connection,
     bulk_update_content_submissions,
 )
 from content_submission import fetch_content_submissions, fetch_status_map
@@ -11,6 +10,14 @@ from content_submission import fetch_content_submissions, fetch_status_map
 
 def render():
     st.title("Creator Content QC")
+
+    # =========================
+    # 0. SESSION STATE INITIALISATION
+    # =========================
+    if "qc_original" not in st.session_state:
+        st.session_state.qc_original = None
+    if "qc_editable" not in st.session_state:
+        st.session_state.qc_editable = None
 
     # =========================
     # 1. LOAD BASE DATA (FROM DB)
@@ -22,18 +29,23 @@ def render():
 
     sub_df = pd.DataFrame(submissions_rows)
 
-    # Match the same date handling as your main page
-    sub_df["submission_date"] = pd.to_datetime(sub_df["submission_date"]).dt.normalize()
+    # Basic date handling – follow main content_submission logic style
+    sub_df["submission_date"] = pd.to_datetime(sub_df["submission_date"])
     sub_df["posting_date"] = pd.to_datetime(sub_df["posting_date"]).dt.date
 
-    # =========================
-    # 2. FILTER FORM (SNAPSHOT EXPORT)
-    # =========================
+    # For display
+    if "Time Submitted" not in sub_df.columns:
+        sub_df["Time Submitted"] = sub_df["submission_date"]
+
     min_posting_date = sub_df["posting_date"].min()
     max_posting_date = sub_df["posting_date"].max()
 
+    # =========================
+    # 2. FILTER FORM (EXPORT SNAPSHOT)
+    # =========================
     with st.form("qc_filters"):
         col1, col2, col3 = st.columns(3)
+
         with col1:
             start_date = st.date_input(
                 "Start posting date",
@@ -41,6 +53,7 @@ def render():
                 min_value=min_posting_date,
                 max_value=max_posting_date,
             )
+
         with col2:
             end_date = st.date_input(
                 "End posting date",
@@ -48,6 +61,7 @@ def render():
                 min_value=min_posting_date,
                 max_value=max_posting_date,
             )
+
         with col3:
             tiktok_filter = st.text_input(
                 "Filter by TikTok ID (optional)",
@@ -57,31 +71,27 @@ def render():
 
         export_button = st.form_submit_button("📤 Export QC Data")
 
-    # Init session state containers for QC snapshot
-    if "qc_original" not in st.session_state:
-        st.session_state.qc_original = None
-    if "qc_editable" not in st.session_state:
-        st.session_state.qc_editable = None
-
     # When user clicks export, we take a FROZEN snapshot
     if export_button:
-        filtered_df = sub_df[
+        mask = (
             (sub_df["posting_date"] >= start_date)
             & (sub_df["posting_date"] <= end_date)
-        ].copy()
+        )
 
         if tiktok_filter.strip():
-            filtered_df = filtered_df[
-                filtered_df["tiktok_id"].astype(str).str.contains(
-                    tiktok_filter.strip(), case=False, na=False
-                )
-            ]
+            mask &= sub_df["tiktok_id"].astype(str).str.contains(
+                tiktok_filter.strip(), case=False, na=False
+            )
+
+        filtered_df = sub_df.loc[mask].copy()
 
         if filtered_df.empty:
+            st.session_state.qc_original = None
+            st.session_state.qc_editable = None
             st.warning("No rows found for this filter. Try another date or TikTok ID.")
         else:
-            # Keep only relevant columns for QC
-            qc_columns = [
+            # Keep only relevant columns for QC (only use columns that exist)
+            desired_qc_columns = [
                 "id",
                 "tiktok_id",
                 "full_name",
@@ -93,14 +103,17 @@ def render():
                 "category_name",
                 "status_name",
                 "reason",
-                # later you can add "video_quality" here once it's in DB + SELECT
+                # Add more QC-related columns here later if you want
+                # e.g. "video_quality"
             ]
+            qc_columns = [c for c in desired_qc_columns if c in filtered_df.columns]
             filtered_df = filtered_df[qc_columns].copy()
 
             # Normalize NaNs
-            filtered_df["reason"] = filtered_df["reason"].fillna("")
+            if "reason" in filtered_df.columns:
+                filtered_df["reason"] = filtered_df["reason"].fillna("")
 
-            # Store snapshot in session
+            # Store snapshot in session (this is your frozen QC batch)
             st.session_state.qc_original = filtered_df.copy()
             st.session_state.qc_editable = filtered_df.copy()
 
@@ -115,42 +128,45 @@ def render():
     qc_original = st.session_state.qc_original
     qc_editable = st.session_state.qc_editable
 
-    if qc_editable is None or qc_editable.empty:
+    if qc_original is None or qc_editable is None or qc_editable.empty:
         st.info("No QC batch loaded yet. Use the filters above and click **Export QC Data**.")
         return
 
     st.subheader("📝 QC Snapshot (Editable)")
 
-    # Fetch status map for dropdown
+    # Fetch status map for dropdown options
     status_df = fetch_status_map()
-    editable_status_df = status_df[status_df["id"] != 1].copy()  # same rule as main page
+    # Same rule as in your main content_submission page: exclude id = 1
+    editable_status_df = status_df[status_df["id"] != 1].copy()
     status_options = editable_status_df["status_name"].tolist()
     status_name_to_id = dict(
         zip(status_df["status_name"], status_df["id"])
-    )  # full map for updates
+    )
 
     # Configure editable columns
-    edit_column_config = {
-        "status_name": st.column_config.SelectboxColumn(
+    edit_column_config = {}
+    if "status_name" in qc_editable.columns:
+        edit_column_config["status_name"] = st.column_config.SelectboxColumn(
             "Status",
             options=status_options,
             required=True,
             help="Set latest status for this submission.",
-        ),
-        "reason": st.column_config.TextColumn(
+        )
+    if "reason" in qc_editable.columns:
+        edit_column_config["reason"] = st.column_config.TextColumn(
             "Reason",
             help="Explain why this status / quality is given.",
-        ),
-        # Example for later when you add a quality column:
-        # "video_quality": st.column_config.SelectboxColumn(
-        #     "Video Quality",
-        #     options=["Low", "Medium", "High"],
-        #     required=False,
-        # ),
-    }
+        )
+    # Example for future:
+    # if "video_quality" in qc_editable.columns:
+    #     edit_column_config["video_quality"] = st.column_config.SelectboxColumn(
+    #         "Video Quality",
+    #         options=["Low", "Medium", "High"],
+    #         required=False,
+    #     )
 
-    # Non-editable columns
-    disabled_cols = [
+    # Non-editable columns (only those that exist)
+    non_editable_candidates = [
         "id",
         "tiktok_id",
         "full_name",
@@ -161,6 +177,7 @@ def render():
         "link_post",
         "category_name",
     ]
+    disabled_cols = [c for c in non_editable_candidates if c in qc_editable.columns]
 
     # User edits only the snapshot in memory
     edited_df = st.data_editor(
@@ -173,11 +190,11 @@ def render():
         key="qc_data_editor",
     )
 
-    # Update session with the edited snapshot
+    # Save edited snapshot back to session_state
     st.session_state.qc_editable = edited_df.copy()
 
     # =========================
-    # 4. IMPORT BUTTON (WRITE BACK TO DB)
+    # 4. IMPORT BUTTON (WRITE BACK TO DB ONCE)
     # =========================
     if st.button("📥 Import QC Changes to DB", type="primary", use_container_width=True):
         qc_original = st.session_state.qc_original
@@ -187,40 +204,57 @@ def render():
             st.info("No QC batch loaded to import.")
             return
 
-        # Build diff ONLY when user clicks Import
         original_idx = qc_original.set_index("id")
         edited_idx = qc_editable.set_index("id")
 
         changes = []
+
         for idx in edited_idx.index:
-            orig_status = original_idx.loc[idx, "status_name"]
-            new_status = edited_idx.loc[idx, "status_name"]
+            row_orig = original_idx.loc[idx]
+            row_new = edited_idx.loc[idx]
 
-            orig_reason = original_idx.loc[idx, "reason"]
-            new_reason = edited_idx.loc[idx, "reason"]
+            # Handle status
+            status_changed = False
+            new_status_name = None
+            if "status_name" in edited_idx.columns:
+                orig_status_name = row_orig.get("status_name")
+                new_status_name = row_new.get("status_name")
+                status_changed = orig_status_name != new_status_name
 
-            # Normalize None / NaN / whitespace
-            orig_reason_clean = ("" if pd.isna(orig_reason) else str(orig_reason)).strip()
-            new_reason_clean = ("" if pd.isna(new_reason) else str(new_reason)).strip()
+            # Handle reason
+            reason_changed = False
+            new_reason_clean = None
+            if "reason" in edited_idx.columns:
+                orig_reason = row_orig.get("reason")
+                new_reason = row_new.get("reason")
 
-            # If no change on both fields, skip
-            if (orig_status == new_status) and (orig_reason_clean == new_reason_clean):
+                orig_reason_clean = ("" if pd.isna(orig_reason) else str(orig_reason)).strip()
+                new_reason_clean = ("" if pd.isna(new_reason) else str(new_reason)).strip()
+
+                reason_changed = orig_reason_clean != new_reason_clean
+
+            # Skip if nothing changed
+            if not status_changed and not reason_changed:
                 continue
 
-            # Map status_name -> status_id for update
-            if new_status not in status_name_to_id:
-                # Safety: skip if mapping missing
-                continue
+            # Map status_name -> status_id if status changed
+            status_id = None
+            if status_changed:
+                if new_status_name not in status_name_to_id:
+                    # Safety guard: skip row if mapping unavailable
+                    continue
+                status_id = int(status_name_to_id[new_status_name])
 
-            status_id = int(status_name_to_id[new_status])
+            # Build change payload for this row
+            change_row = {"id": int(idx)}
 
-            changes.append(
-                {
-                    "id": int(idx),
-                    "status_id": status_id,
-                    "reason": new_reason_clean if new_reason_clean else None,
-                }
-            )
+            if status_id is not None:
+                change_row["status_id"] = status_id
+
+            if reason_changed:
+                change_row["reason"] = new_reason_clean if new_reason_clean else None
+
+            changes.append(change_row)
 
         if not changes:
             st.info("No changes detected to import.")
@@ -230,7 +264,7 @@ def render():
             bulk_update_content_submissions(changes)
             st.success(f"✅ Successfully updated **{len(changes)}** submission(s) in DB.")
 
-            # After successful import, current edited snapshot becomes the new baseline
+            # After import, make the current edited snapshot the new baseline
             st.session_state.qc_original = st.session_state.qc_editable.copy()
 
         except Exception as e:
