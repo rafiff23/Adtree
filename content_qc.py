@@ -14,25 +14,18 @@ def render():
     # 0) INIT STATE
     # =========================
     if "qc_batch" not in st.session_state:
-        st.session_state.qc_batch = None  # editable snapshot shown in data_editor
+        st.session_state.qc_batch = None
     if "qc_batch_original" not in st.session_state:
-        st.session_state.qc_batch_original = None  # baseline snapshot for diff
+        st.session_state.qc_batch_original = None
     if "qc_success_msg" not in st.session_state:
-        st.session_state.qc_success_msg = None  # persist success message
-    if "qc_success_count" not in st.session_state:
-        st.session_state.qc_success_count = None
+        st.session_state.qc_success_msg = None
 
-    # Show last success message (longer, persistent)
+    # Persistent success message (longer)
     if st.session_state.qc_success_msg:
         st.success(st.session_state.qc_success_msg)
-        col_a, col_b = st.columns([1, 5])
-        with col_a:
-            if st.button("Clear", key="qc_clear_success"):
-                st.session_state.qc_success_msg = None
-                st.session_state.qc_success_count = None
-                st.rerun()
-        with col_b:
-            st.caption("Tip: message stays until you clear it.")
+        if st.button("Clear message", key="qc_clear_success"):
+            st.session_state.qc_success_msg = None
+            st.rerun()
 
     # =========================
     # 1) LOAD BASE DATA (DB) - keep same select logic
@@ -44,7 +37,6 @@ def render():
 
     sub_df = pd.DataFrame(submissions_rows)
 
-    # Date handling (same style)
     sub_df["submission_date"] = pd.to_datetime(sub_df["submission_date"], errors="coerce")
     sub_df["posting_date"] = pd.to_datetime(sub_df["posting_date"], errors="coerce").dt.date
 
@@ -90,8 +82,8 @@ def render():
         export_button = st.form_submit_button("📤 Export QC Data")
 
     if export_button:
+        # Clear prior success
         st.session_state.qc_success_msg = None
-        st.session_state.qc_success_count = None
 
         mask = (sub_df["posting_date"] >= start_date) & (sub_df["posting_date"] <= end_date)
 
@@ -105,11 +97,8 @@ def render():
         if filtered_df.empty:
             st.session_state.qc_batch = None
             st.session_state.qc_batch_original = None
-
-            # Reset editor internal buffer for clean start
             if QC_EDITOR_KEY in st.session_state:
                 del st.session_state[QC_EDITOR_KEY]
-
             st.warning("No rows found for this filter. Try another date or TikTok ID.")
             return
 
@@ -129,19 +118,18 @@ def render():
         cols = [c for c in desired_cols if c in filtered_df.columns]
         filtered_df = filtered_df[cols].copy()
 
-        # IMPORTANT:
-        # - Keep ORIGINAL with real NULLs (do NOT fillna)
-        # - Make EDITABLE version with blanks for UI
+        # ORIGINAL baseline: keep real NULLs
         original_df = filtered_df.reset_index(drop=True)
-        editable_df = original_df.copy(deep=True)
 
+        # EDITABLE copy: show NULL as ""
+        editable_df = original_df.copy(deep=True)
         if "reason" in editable_df.columns:
             editable_df["reason"] = editable_df["reason"].where(editable_df["reason"].notna(), "")
 
         st.session_state.qc_batch_original = original_df
         st.session_state.qc_batch = editable_df
 
-        # Reset editor internal buffer so it uses the new snapshot
+        # Reset editor buffer for clean start
         if QC_EDITOR_KEY in st.session_state:
             del st.session_state[QC_EDITOR_KEY]
 
@@ -172,7 +160,7 @@ def render():
             "Status",
             options=status_options,
             required=True,
-            help="Reason can be blank. Status still can be saved.",
+            help="Reason is optional.",
         )
     if "reason" in qc_batch.columns:
         edit_column_config["reason"] = st.column_config.TextColumn(
@@ -196,9 +184,6 @@ def render():
         key=QC_EDITOR_KEY,
     )
 
-    # NOTE: we intentionally do NOT write edited_df back into qc_batch every rerun.
-    # Streamlit keeps the edits in the widget state via QC_EDITOR_KEY.
-
     # =========================
     # 4) IMPORT BUTTON (DIFF ONLY HERE)
     # =========================
@@ -207,11 +192,9 @@ def render():
             st.warning("Baseline snapshot missing. Please Export QC Data again.")
             return
 
-        # baseline (keeps NULL info)
-        base = qc_original.copy()
-        cur = edited_df.copy()
+        base = qc_original.copy()  # baseline keeps NULL
+        cur = edited_df.copy()     # current editor state
 
-        # Align by id
         base_by_id = base.set_index("id")
         cur_by_id = cur.set_index("id")
 
@@ -224,42 +207,27 @@ def render():
             base_status = base_row.get("status_name")
             cur_status = cur_row.get("status_name")
 
-            # baseline reason may be NULL; current reason will be "" or text
             base_reason_raw = base_row.get("reason")
             base_reason_clean = "" if pd.isna(base_reason_raw) else str(base_reason_raw).strip()
 
             cur_reason_raw = cur_row.get("reason")
             cur_reason_clean = "" if pd.isna(cur_reason_raw) else str(cur_reason_raw).strip()
 
-            # detect changes
             status_changed = (base_status != cur_status)
             reason_changed = (base_reason_clean != cur_reason_clean)
 
             if not status_changed and not reason_changed:
                 continue
 
-            payload = {"id": int(row_id)}
+            # ✅ Always include status_id (even if only reason changed)
+            if cur_status not in status_name_to_id:
+                continue
 
-            # If status changed, map to status_id
-            if status_changed:
-                if cur_status not in status_name_to_id:
-                    continue
-                payload["status_id"] = int(status_name_to_id[cur_status])
-
-            # CRITICAL FIX:
-            # Always include 'reason' in payload so db function won't crash.
-            # But don't overwrite existing reason unless:
-            # - reason actually changed, OR
-            # - status changed and user intentionally left reason blank (allowed)
-            #
-            # We will send:
-            # - None if blank
-            # - text otherwise
-            if reason_changed or status_changed:
-                payload["reason"] = (cur_reason_clean if cur_reason_clean else None)
-            else:
-                # not reachable due to condition, but safe
-                payload["reason"] = (base_reason_clean if base_reason_clean else None)
+            payload = {
+                "id": int(row_id),
+                "status_id": int(status_name_to_id[cur_status]),
+                "reason": (cur_reason_clean if cur_reason_clean else None),  # reason optional
+            }
 
             changes.append(payload)
 
@@ -270,14 +238,12 @@ def render():
         try:
             bulk_update_content_submissions(changes)
 
-            st.session_state.qc_success_count = len(changes)
             st.session_state.qc_success_msg = (
                 f"✅ Successfully updated **{len(changes)}** submission(s) in DB. "
                 "You can continue editing and import again."
             )
 
-            # Update baseline to current state so you can edit the SAME ROW again
-            # Keep NULLs in baseline: convert "" to None for baseline storage
+            # Update baseline so you can edit the same rows again
             new_base = cur.copy(deep=True)
             if "reason" in new_base.columns:
                 new_base["reason"] = new_base["reason"].apply(
@@ -285,10 +251,15 @@ def render():
                 )
 
             st.session_state.qc_batch_original = new_base
-            st.session_state.qc_batch = cur  # keep UI snapshot as-is
 
-            # Do NOT st.rerun() immediately; let success message stay visible.
-            # If you want, users can keep editing without reset.
+            # Keep UI snapshot updated too
+            st.session_state.qc_batch = cur
+
+            # Reset editor buffer so table doesn't glitch after import
+            if QC_EDITOR_KEY in st.session_state:
+                del st.session_state[QC_EDITOR_KEY]
+
+            st.rerun()
 
         except Exception as e:
             st.error(f"❌ Error while importing QC changes to DB: {e}")
