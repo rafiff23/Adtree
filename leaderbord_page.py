@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 from db import get_connection
 
-TABLE_FULL = "leaderbord.creator_dec_leaderboard_all_level"
+TABLE_FULL = "leaderboard.creator_dec_leaderboard_all_level"
 
 # -----------------------------
 # STYLE (HTML/CSS)
