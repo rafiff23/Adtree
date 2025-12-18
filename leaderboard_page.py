@@ -1,15 +1,35 @@
 import pandas as pd
 import streamlit as st
-from db import get_connection
+import psycopg2
+import os
 
 TABLE_FULL = "leaderboard.creator_dec_leaderboard_all_level"
 
 
 # =========================================
-# 1) DEBUG: DB IDENTITY (biar yakin connect kemana)
+# CUSTOM CONNECTION FOR PANDAS (no RealDictCursor)
+# =========================================
+def get_pandas_connection():
+    """
+    Connection WITHOUT RealDictCursor for pandas compatibility.
+    RealDictCursor breaks pd.read_sql_query()!
+    """
+    conn = psycopg2.connect(
+        host=os.getenv("PG_HOST", "localhost"),
+        port=os.getenv("PG_PORT", "5432"),
+        dbname=os.getenv("PG_DB", "adtree"),
+        user=os.getenv("PG_USER", "postgres"),
+        password=os.getenv("PG_PASSWORD", "4dtr33"),
+        # NO cursor_factory here!
+    )
+    return conn
+
+
+# =========================================
+# 1) DEBUG: DB IDENTITY
 # =========================================
 def load_db_identity() -> pd.DataFrame:
-    conn = get_connection()
+    conn = get_pandas_connection()
     try:
         sql = """
         SELECT
@@ -45,7 +65,7 @@ def load_usernames(level_filter: str) -> list[str]:
         ORDER BY username;
     """
 
-    conn = get_connection()
+    conn = get_pandas_connection()
     try:
         df = pd.read_sql_query(sql, conn, params=params)
     finally:
@@ -56,7 +76,7 @@ def load_usernames(level_filter: str) -> list[str]:
 
 
 # =========================================
-# 3) MAIN LOADER WITH EXPLICIT TYPE CASTING
+# 3) MAIN LOADER
 # =========================================
 @st.cache_data(ttl=60)
 def load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
@@ -73,17 +93,16 @@ def load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
-    # EXPLICIT CASTING in SQL to ensure proper types
     sql = f"""
         SELECT
-          CAST(rank_no AS INTEGER) as rank_no,
-          CAST(creator_name AS TEXT) as creator_name,
-          CAST(username AS TEXT) as username,
-          CAST(post_count AS INTEGER) as post_count,
-          CAST(redemption_gmv_idr AS NUMERIC) as redemption_gmv_idr,
-          CAST(status AS TEXT) as status,
-          CAST(hadiah_idr AS NUMERIC) as hadiah_idr,
-          CAST(level AS INTEGER) as level,
+          rank_no,
+          creator_name,
+          username,
+          post_count,
+          redemption_gmv_idr,
+          status,
+          hadiah_idr,
+          level,
           imported_at
         FROM {TABLE_FULL}
         {where_sql}
@@ -91,34 +110,20 @@ def load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
         LIMIT 500;
     """
 
-    conn = get_connection()
+    conn = get_pandas_connection()
     try:
         df = pd.read_sql_query(sql, conn, params=params)
     finally:
         conn.close()
 
-    # ADDITIONAL SAFETY: Force pandas dtypes after load
-    if not df.empty:
-        try:
-            df['rank_no'] = pd.to_numeric(df['rank_no'], errors='coerce').astype('Int64')
-            df['post_count'] = pd.to_numeric(df['post_count'], errors='coerce').astype('Int64')
-            df['level'] = pd.to_numeric(df['level'], errors='coerce').astype('Int64')
-            df['redemption_gmv_idr'] = pd.to_numeric(df['redemption_gmv_idr'], errors='coerce')
-            df['hadiah_idr'] = pd.to_numeric(df['hadiah_idr'], errors='coerce')
-            df['creator_name'] = df['creator_name'].astype(str)
-            df['username'] = df['username'].astype(str)
-            df['status'] = df['status'].astype(str)
-        except Exception as e:
-            st.error(f"Type conversion error: {e}")
-
     return df
 
 
 # =========================================
-# 4) SIMPLE UI WITH MORE DEBUG INFO
+# 4) UI
 # =========================================
 def render():
-    st.title("Leaderboard (Debug Simple)")
+    st.title("Leaderboard (Debug Fixed)")
 
     c0, c1 = st.columns([1, 3])
     with c0:
@@ -126,7 +131,7 @@ def render():
             st.cache_data.clear()
             st.rerun()
 
-    with st.expander("DB Identity (must match the DB you expect)", expanded=True):
+    with st.expander("DB Identity", expanded=True):
         st.dataframe(load_db_identity(), hide_index=True, use_container_width=True)
 
     st.subheader("Filters")
@@ -135,7 +140,6 @@ def render():
     with col1:
         level_filter = st.selectbox("Level", ["All", "0", "1", "2", "3", "4"], index=0)
 
-    # dropdown username depends on selected level
     usernames = load_usernames(level_filter)
     with col2:
         username_filter = st.selectbox("Username", usernames, index=0)
@@ -144,24 +148,18 @@ def render():
 
     st.subheader("Raw Data Preview")
     st.write("Rows:", len(df))
-    st.write("Columns:", df.columns.tolist())
     st.write("Dtypes:", df.dtypes.astype(str).to_dict())
     
-    # Debug: Show first row as dict to see actual values
     if not df.empty:
-        st.write("First row as dict:", df.iloc[0].to_dict())
+        st.write("First row:", df.iloc[0].to_dict())
     
     st.dataframe(df, use_container_width=True)
 
-    # Quick sanity check: show top 5 values for rank_no to confirm it is numeric values, not strings
     st.subheader("Sanity Check")
     if not df.empty:
-        st.write("rank_no head:", df["rank_no"].head(10).tolist())
-        st.write("rank_no type:", type(df["rank_no"].iloc[0]))
-        st.write("creator_name head:", df["creator_name"].head(10).tolist())
-        st.write("username head:", df["username"].head(10).tolist())
-        st.write("redemption_gmv_idr head:", df["redemption_gmv_idr"].head(10).tolist())
+        st.write("rank_no sample:", df["rank_no"].head(5).tolist())
+        st.write("creator_name sample:", df["creator_name"].head(5).tolist())
+        st.write("username sample:", df["username"].head(5).tolist())
 
 
-# For pages/ usage
 render()
