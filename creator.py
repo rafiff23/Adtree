@@ -3,7 +3,7 @@ from creator_list import render as creator_list_page
 from content_submission import render as content_submission_page
 from content_qc import render as content_qc_page
 from leaderboard import render as leaderboard_page
-from leaderbord_page import render as leaderbord_page_page
+from leaderboard_page import render as leaderbord_page_page
 
 st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
