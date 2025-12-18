@@ -175,30 +175,11 @@ def _load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
         ORDER BY redemption_gmv_idr DESC NULLS LAST, hadiah_idr DESC NULLS LAST, post_count DESC NULLS LAST;
     """
 
-    # conn = get_connection()
-    # try:
-    #     df = pd.read_sql_query(sql, conn, params=params)
-    # finally:
-    #     conn.close()
-    
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT current_database(), current_user, inet_server_addr(), inet_server_port();")
-            db_info = cur.fetchone()
-
-            cur.execute("""
-                SELECT table_schema, table_name
-                FROM information_schema.tables
-                WHERE table_name = 'creator_dec_leaderboard_all_level';
-            """)
-            tables = cur.fetchall()
-
-        st.write("DB INFO (what Streamlit is connected to):", db_info)
-        st.write("Tables found with this name:", tables)
+        df = pd.read_sql_query(sql, conn, params=params)
     finally:
         conn.close()
-
 
     # Compute rank based on sorted order
     df.insert(0, "Rank", range(1, len(df) + 1))
