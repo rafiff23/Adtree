@@ -119,14 +119,6 @@ LEADERBOARD_CSS = """
   font-size: 26px;
 }
 
-/* Filters row */
-.filters {
-  display:flex;
-  gap: 14px;
-  margin-top: 12px;
-  margin-bottom: 10px;
-}
-
 .small-note {
   color: rgba(255,255,255,0.55);
   font-size: 12px;
@@ -143,22 +135,69 @@ def _format_idr(n):
     except:
         return str(n)
 
+# ---------------------------------------------------------
+# NEW: load distinct usernames for dropdown (by level)
+# ---------------------------------------------------------
 @st.cache_data(ttl=60)
-def _load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
-    """
-    Pull all rows, apply filters, order by GMV desc.
-    Rank is computed on the filtered result.
-    """
+def _load_usernames(level_filter: str) -> list[str]:
     where = []
     params = []
 
+    # filter level
     if level_filter != "All":
         where.append("level = %s")
         params.append(int(level_filter))
 
-    if username_filter.strip():
-        where.append("username ILIKE %s")
-        params.append(f"%{username_filter.strip()}%")
+    # SAFEGUARD: buang header-row yang keinsert
+    # (ini yang bikin kamu lihat 'username', 'creator_name', dll sebagai value)
+    where.append("COALESCE(NULLIF(TRIM(username), ''), '') <> ''")
+    where.append("LOWER(TRIM(username)) <> 'username'")
+    where.append("LOWER(TRIM(creator_name)) <> 'creator_name'")
+
+    where_sql = "WHERE " + " AND ".join(where)
+
+    sql = f"""
+        SELECT DISTINCT username
+        FROM {TABLE_FULL}
+        {where_sql}
+        ORDER BY username ASC;
+    """
+
+    conn = get_connection()
+    try:
+        dfu = pd.read_sql_query(sql, conn, params=params)
+    finally:
+        conn.close()
+
+    usernames = dfu["username"].dropna().astype(str).tolist()
+    return ["All"] + usernames
+
+# ---------------------------------------------------------
+# REVISED: leaderboard loader uses username dropdown
+# ---------------------------------------------------------
+@st.cache_data(ttl=60)
+def _load_leaderboard(level_filter: str, username_selected: str) -> pd.DataFrame:
+    """
+    Pull rows, apply filters, order by GMV desc.
+    Rank computed on filtered result.
+    """
+    where = []
+    params = []
+
+    # filter level
+    if level_filter != "All":
+        where.append("level = %s")
+        params.append(int(level_filter))
+
+    # filter username (exact match because dropdown)
+    if username_selected and username_selected != "All":
+        where.append("username = %s")
+        params.append(username_selected)
+
+    # SAFEGUARD: buang header-row yang keinsert sebagai data
+    where.append("LOWER(TRIM(username)) <> 'username'")
+    where.append("LOWER(TRIM(creator_name)) <> 'creator_name'")
+    where.append("LOWER(TRIM(status)) <> 'status'")
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
@@ -172,7 +211,9 @@ def _load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
             hadiah_idr
         FROM {TABLE_FULL}
         {where_sql}
-        ORDER BY redemption_gmv_idr DESC NULLS LAST, hadiah_idr DESC NULLS LAST, post_count DESC NULLS LAST;
+        ORDER BY redemption_gmv_idr DESC NULLS LAST,
+                 hadiah_idr DESC NULLS LAST,
+                 post_count DESC NULLS LAST;
     """
 
     conn = get_connection()
@@ -197,10 +238,6 @@ def _load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
     return df
 
 def _podium_card(rank: int, row: pd.Series) -> str:
-    """
-    Creates a single HTML card for top 1/2/3.
-    We don't have profile images in DB, so we show initials.
-    """
     name = row.get("Creator Name", "") or ""
     username = row.get("Username", "") or ""
     gmv = _format_idr(row.get("GMV"))
@@ -235,15 +272,20 @@ def render():
     """, unsafe_allow_html=True)
 
     # -----------------------------
-    # FILTERS (side by side)
+    # FILTERS
+    # - Level selectbox
+    # - Username dropdown (depends on level)
     # -----------------------------
     c1, c2 = st.columns([1, 2])
     with c1:
         level_filter = st.selectbox("Level", ["All", "0", "1", "2", "3", "4"], index=0)
-    with c2:
-        username_filter = st.text_input("Username filter (contains)", value="", placeholder="e.g. emmaaria")
 
-    df = _load_leaderboard(level_filter, username_filter)
+    # username options depends on selected level
+    usernames = _load_usernames(level_filter)
+    with c2:
+        username_selected = st.selectbox("Username", usernames, index=0)
+
+    df = _load_leaderboard(level_filter, username_selected)
 
     if df.empty:
         st.warning("No rows found for your filter.")
@@ -255,13 +297,14 @@ def render():
     # -----------------------------
     top3 = df.head(3).copy()
 
-    # Make sure we still render 3 cards even if < 3 rows
     cards_html = []
-    for r in [2, 1, 3]:  # visually: #2 left, #1 middle, #3 right (like common leaderboard UI)
+    for r in [2, 1, 3]:
         if len(top3) >= r:
             cards_html.append(_podium_card(r, top3.iloc[r - 1]))
         else:
-            cards_html.append(f'<div class="card rank{r}"><div class="badge">#{r}</div><div class="avatar">?</div><div class="name">-</div><div class="user">@-</div><div class="score">-</div></div>')
+            cards_html.append(
+                f'<div class="card rank{r}"><div class="badge">#{r}</div><div class="avatar">?</div><div class="name">-</div><div class="user">@-</div><div class="score">-</div></div>'
+            )
 
     st.markdown(f"""
       <div class="podium">
@@ -272,19 +315,14 @@ def render():
     """, unsafe_allow_html=True)
 
     # -----------------------------
-    # TABLE (includes top 3)
-    # - Includes all metrics except: rank_no, level, imported_at
-    # - We already excluded them in SQL
+    # TABLE
     # -----------------------------
     st.subheader("All Creators")
 
     df_table = df.copy()
-
-    # Nice formatting for display (keep numeric too? we’ll show formatted IDR strings)
     df_table["GMV"] = df_table["GMV"].apply(_format_idr)
     df_table["Hadiah"] = df_table["Hadiah"].apply(_format_idr)
 
-    # Order already correct; Rank already correct
     st.dataframe(df_table, use_container_width=True, hide_index=True)
 
     st.markdown('<p class="small-note">Tip: If you’re importing multiple times, TRUNCATE first so the table doesn’t duplicate rows.</p>', unsafe_allow_html=True)
