@@ -56,7 +56,7 @@ def load_usernames(level_filter: str) -> list[str]:
 
 
 # =========================================
-# 3) MAIN LOADER (VERSI AWAL, SIMPLE)
+# 3) MAIN LOADER WITH EXPLICIT TYPE CASTING
 # =========================================
 @st.cache_data(ttl=60)
 def load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
@@ -73,21 +73,17 @@ def load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
-    # NOTE:
-    # - Jangan rename
-    # - Jangan format IDR
-    # - Jangan compute rank dulu
-    # Tujuan: lihat raw data asli
+    # EXPLICIT CASTING in SQL to ensure proper types
     sql = f"""
         SELECT
-          rank_no,
-          creator_name,
-          username,
-          post_count,
-          redemption_gmv_idr,
-          status,
-          hadiah_idr,
-          level,
+          CAST(rank_no AS INTEGER) as rank_no,
+          CAST(creator_name AS TEXT) as creator_name,
+          CAST(username AS TEXT) as username,
+          CAST(post_count AS INTEGER) as post_count,
+          CAST(redemption_gmv_idr AS NUMERIC) as redemption_gmv_idr,
+          CAST(status AS TEXT) as status,
+          CAST(hadiah_idr AS NUMERIC) as hadiah_idr,
+          CAST(level AS INTEGER) as level,
           imported_at
         FROM {TABLE_FULL}
         {where_sql}
@@ -101,11 +97,25 @@ def load_leaderboard(level_filter: str, username_filter: str) -> pd.DataFrame:
     finally:
         conn.close()
 
+    # ADDITIONAL SAFETY: Force pandas dtypes after load
+    if not df.empty:
+        try:
+            df['rank_no'] = pd.to_numeric(df['rank_no'], errors='coerce').astype('Int64')
+            df['post_count'] = pd.to_numeric(df['post_count'], errors='coerce').astype('Int64')
+            df['level'] = pd.to_numeric(df['level'], errors='coerce').astype('Int64')
+            df['redemption_gmv_idr'] = pd.to_numeric(df['redemption_gmv_idr'], errors='coerce')
+            df['hadiah_idr'] = pd.to_numeric(df['hadiah_idr'], errors='coerce')
+            df['creator_name'] = df['creator_name'].astype(str)
+            df['username'] = df['username'].astype(str)
+            df['status'] = df['status'].astype(str)
+        except Exception as e:
+            st.error(f"Type conversion error: {e}")
+
     return df
 
 
 # =========================================
-# 4) SIMPLE UI
+# 4) SIMPLE UI WITH MORE DEBUG INFO
 # =========================================
 def render():
     st.title("Leaderboard (Debug Simple)")
@@ -134,15 +144,23 @@ def render():
 
     st.subheader("Raw Data Preview")
     st.write("Rows:", len(df))
+    st.write("Columns:", df.columns.tolist())
     st.write("Dtypes:", df.dtypes.astype(str).to_dict())
+    
+    # Debug: Show first row as dict to see actual values
+    if not df.empty:
+        st.write("First row as dict:", df.iloc[0].to_dict())
+    
     st.dataframe(df, use_container_width=True)
 
     # Quick sanity check: show top 5 values for rank_no to confirm it is numeric values, not strings
     st.subheader("Sanity Check")
     if not df.empty:
         st.write("rank_no head:", df["rank_no"].head(10).tolist())
+        st.write("rank_no type:", type(df["rank_no"].iloc[0]))
         st.write("creator_name head:", df["creator_name"].head(10).tolist())
         st.write("username head:", df["username"].head(10).tolist())
+        st.write("redemption_gmv_idr head:", df["redemption_gmv_idr"].head(10).tolist())
 
 
 # For pages/ usage
