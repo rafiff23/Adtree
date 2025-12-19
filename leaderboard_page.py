@@ -147,6 +147,17 @@ LEADERBOARD_CSS = """
   font-size: 12px;
   margin-top: 6px;
 }
+
+.slot-highlight {
+  color: #4da3ff; /* blue highlight */
+  font-weight: 800;
+}
+
+.slot-reward {
+  color: #7bb8ff;
+  font-weight: 800;
+}
+
 </style>
 """
 
@@ -275,10 +286,69 @@ def _load_level_data(level: str) -> pd.DataFrame:
         "status": "Status",
     })
 
+# def _render_slots(level: str, df_level: pd.DataFrame):
+#     slot_count = _slot_count_by_level(level)
+#     eligible = _eligible_statuses(level)
+
+#     df_eligible = df_level[df_level["Status"].isin(eligible)].copy()
+#     df_fill = df_eligible.head(slot_count)
+
+#     cards = []
+#     for i in range(slot_count):
+#         slot_no = i + 1
+
+#         if i < len(df_fill):
+#             r = df_fill.iloc[i]
+#             name = _safe_str(r["Creator Name"]) or "-"
+#             user = _safe_str(r["Username"]) or "-"
+#             gmv = _format_idr(r["GMV"])
+#             status = _safe_str(r["Status"]) or "-"
+
+#             cards.append(_html(f"""
+# <div class="slot-card slot-filled">
+#   <div class="slot-tag">Slot {slot_no}</div>
+#   <div class="slot-title">Filled</div>
+#   <div class="slot-name">{name}</div>
+#   <div class="slot-user">@{user}</div>
+#   <div class="slot-metric">GMV: {gmv}</div>
+#   <div class="slot-metric">Status: {status}</div>
+# </div>
+# """))
+#         else:
+#             cards.append(_html(f"""
+# <div class="slot-card slot-empty">
+#   <div class="slot-tag">Slot {slot_no}</div>
+#   <div class="slot-title">Available</div>
+#   <div class="slot-name">-</div>
+#   <div class="slot-user">@-</div>
+#   <div class="slot-metric">GMV: -</div>
+#   <div class="slot-metric">Status: -</div>
+# </div>
+# """))
+
+#     filled_cnt = len(df_fill)
+#     note = "Eligible status: Layer 1 / Layer 2" if level == "0" else "Eligible status: Dapat Hadiah"
+
+#     st.markdown(
+#         _html(f"""
+# <div class="slots-head">
+#   <div>
+#     <div class="title">Reward Slots</div>
+#     <div class="note">{filled_cnt}/{slot_count} filled · {note}</div>
+#   </div>
+# </div>
+# <div class="slots-grid">
+#   {''.join(cards)}
+# </div>
+# """),
+#         unsafe_allow_html=True
+#     )
+
 def _render_slots(level: str, df_level: pd.DataFrame):
     slot_count = _slot_count_by_level(level)
     eligible = _eligible_statuses(level)
 
+    # Eligible creators (logic tetap pakai status)
     df_eligible = df_level[df_level["Status"].isin(eligible)].copy()
     df_fill = df_eligible.head(slot_count)
 
@@ -288,19 +358,28 @@ def _render_slots(level: str, df_level: pd.DataFrame):
 
         if i < len(df_fill):
             r = df_fill.iloc[i]
+
             name = _safe_str(r["Creator Name"]) or "-"
             user = _safe_str(r["Username"]) or "-"
             gmv = _format_idr(r["GMV"])
-            status = _safe_str(r["Status"]) or "-"
+            hadiah = _format_idr(r["Hadiah"])
 
             cards.append(_html(f"""
 <div class="slot-card slot-filled">
   <div class="slot-tag">Slot {slot_no}</div>
-  <div class="slot-title">Filled</div>
+
+  <div class="slot-title slot-highlight">Dapat Hadiah</div>
+
   <div class="slot-name">{name}</div>
   <div class="slot-user">@{user}</div>
-  <div class="slot-metric">GMV: {gmv}</div>
-  <div class="slot-metric">Status: {status}</div>
+
+  <div class="slot-metric">
+    Penjualan Redemption: {gmv}
+  </div>
+
+  <div class="slot-metric slot-reward">
+    Total Hadiah: {hadiah}
+  </div>
 </div>
 """))
         else:
@@ -310,13 +389,16 @@ def _render_slots(level: str, df_level: pd.DataFrame):
   <div class="slot-title">Available</div>
   <div class="slot-name">-</div>
   <div class="slot-user">@-</div>
-  <div class="slot-metric">GMV: -</div>
-  <div class="slot-metric">Status: -</div>
+  <div class="slot-metric">Penjualan Redemption: -</div>
+  <div class="slot-metric">Total Hadiah: -</div>
 </div>
 """))
 
     filled_cnt = len(df_fill)
-    note = "Eligible status: Layer 1 / Layer 2" if level == "0" else "Eligible status: Dapat Hadiah"
+    note = (
+        "Eligible status: Layer 1 / Layer 2" if level == "0"
+        else "Eligible status: Dapat Hadiah"
+    )
 
     st.markdown(
         _html(f"""
