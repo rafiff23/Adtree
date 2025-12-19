@@ -7,7 +7,7 @@ from db import get_connection
 SCHEMA_NAME = "leaderboard"
 
 # =========================================
-# 1) TABLE MAP (3 import modes)
+# 1) IMPORT MODES (3 tables)
 # =========================================
 IMPORT_MODES = {
     "Main Leaderboard": {
@@ -63,9 +63,9 @@ def _clean_idr(v):
         return None
 
     s = s.replace("Rp", "").replace("rp", "")
-    s = s.replace(".", "")        # in case using dots
+    s = s.replace(".", "")
     s = s.replace(" ", "")
-    s = s.replace(",", "")        # remove thousands separator
+    s = s.replace(",", "")
     s = re.sub(r"[^0-9\-]", "", s)
 
     if s in ("", "-"):
@@ -128,7 +128,7 @@ def _normalize_dining_bonus(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 # =========================================
-# 4) DDL per table + ensure last_updated
+# 4) DDL + INSERT HELPERS
 # =========================================
 def _ensure_schema(cur):
     cur.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME};")
@@ -151,7 +151,6 @@ def _ensure_table(cur, mode_key: str):
                 last_updated         TIMESTAMPTZ DEFAULT NOW()
             );
         """)
-        # if table already existed before last_updated was added
         cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS last_updated TIMESTAMPTZ DEFAULT NOW();")
 
     elif mode_key == "All Industry Bonus":
@@ -214,21 +213,20 @@ def _insert(cur, mode_key: str, df_norm: pd.DataFrame):
 # 5) UI
 # =========================================
 def render():
-    st.header("Leaderboard Import (CSV → Postgres)")
-    st.caption("Pilih dulu jenis CSV yang mau di-import. Semua masuk schema `leaderboard` tapi table beda-beda.")
+    st.title("Leaderboard Import")
+    st.caption("Choose the CSV type first. All data will be stored under the `leaderboard` schema, but in different tables.")
 
-    # ---- 3 buttons side-by-side (mode selection)
     if "import_mode" not in st.session_state:
         st.session_state.import_mode = "Main Leaderboard"
 
-    b1, b2, b3 = st.columns(3)
-    with b1:
+    c1, c2, c3 = st.columns(3)
+    with c1:
         if st.button("Main Leaderboard", use_container_width=True):
             st.session_state.import_mode = "Main Leaderboard"
-    with b2:
+    with c2:
         if st.button("All Industry Bonus", use_container_width=True):
             st.session_state.import_mode = "All Industry Bonus"
-    with b3:
+    with c3:
         if st.button("Dining Bonus", use_container_width=True):
             st.session_state.import_mode = "Dining Bonus"
 
@@ -236,28 +234,27 @@ def render():
     tbl = full_table(IMPORT_MODES[mode]["table"])
     required = IMPORT_MODES[mode]["required_cols"]
 
-    st.info(f"Selected: **{mode}** → Target table: `{tbl}`")
+    st.info(f"Selected mode: **{mode}**  →  Target table: `{tbl}`")
 
     uploaded = st.file_uploader(f"Upload CSV for: {mode}", type=["csv"])
-
     if uploaded is None:
-        st.info("Upload CSV untuk mulai.")
+        st.info("Upload a CSV file to start.")
         return
 
     df = pd.read_csv(uploaded)
 
-    # ---- validate columns (case-insensitive)
+    # Validate columns (case-insensitive)
     missing = [c for c in required if c.lower() not in [x.strip().lower() for x in df.columns]]
     if missing:
-        st.error(f"CSV missing columns: {missing}")
-        st.write("Found columns:", list(df.columns))
+        st.error(f"CSV is missing required columns: {missing}")
+        st.write("Detected columns:", list(df.columns))
         return
 
     st.subheader("Raw Preview")
     st.write("Columns:", list(df.columns))
     st.dataframe(df.head(20), use_container_width=True)
 
-    # ---- normalize based on mode
+    # Normalize based on selected mode
     try:
         if mode == "Main Leaderboard":
             df_norm = _normalize_main_leaderboard(df)
@@ -266,7 +263,7 @@ def render():
         else:
             df_norm = _normalize_dining_bonus(df)
     except Exception as e:
-        st.error(f"Normalize failed: {e}")
+        st.error(f"Normalization failed: {e}")
         return
 
     st.subheader("Normalized Preview (will be inserted)")
