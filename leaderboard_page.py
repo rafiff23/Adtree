@@ -2,16 +2,19 @@ import os
 import pandas as pd
 import streamlit as st
 import psycopg2
+from datetime import timezone
+import pytz
 
 TABLE_FULL = "leaderboard.creator_dec_leaderboard_all_level"
+WIB = pytz.timezone("Asia/Jakarta")
 
 # -----------------------------
 # STYLE (HTML/CSS)
 # -----------------------------
 LEADERBOARD_CSS = """
 <style>
-/* Page background */
 .leaderboard-wrap {
+  position: relative;
   background: radial-gradient(1200px 600px at 30% 10%, rgba(90,120,255,0.18), transparent 55%),
               radial-gradient(900px 500px at 80% 0%, rgba(0,255,200,0.10), transparent 45%),
               linear-gradient(180deg, #0b1020 0%, #080b14 100%);
@@ -20,25 +23,37 @@ LEADERBOARD_CSS = """
   border: 1px solid rgba(255,255,255,0.06);
 }
 
-/* Header */
 .lb-title {
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   justify-content:space-between;
   margin-bottom: 10px;
 }
+
 .lb-title h2 {
   margin: 0;
   color: rgba(255,255,255,0.92);
   font-weight: 800;
 }
+
 .lb-sub {
   margin-top: 4px;
   color: rgba(255,255,255,0.55);
   font-size: 13px;
 }
 
-/* Level info box */
+/* Last updated */
+.last-updated {
+  font-size: 12px;
+  color: rgba(255,255,255,0.70);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 6px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Information box */
 .level-info {
   margin-top: 14px;
   margin-bottom: 18px;
@@ -69,7 +84,6 @@ LEADERBOARD_CSS = """
 
 .level-info th {
   color: rgba(255,255,255,0.55);
-  font-weight: 700;
 }
 
 .level-note {
@@ -93,22 +107,10 @@ LEADERBOARD_CSS = """
   padding: 14px;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.08);
-  box-shadow: 0 10px 24px rgba(0,0,0,0.30);
   position: relative;
 }
 
-.card.rank1 {
-  transform: translateY(-10px);
-  background: linear-gradient(180deg, rgba(255,200,0,0.14), rgba(255,255,255,0.05));
-}
-
-.card.rank2 {
-  background: linear-gradient(180deg, rgba(100,180,255,0.14), rgba(255,255,255,0.05));
-}
-
-.card.rank3 {
-  background: linear-gradient(180deg, rgba(70,255,170,0.14), rgba(255,255,255,0.05));
-}
+.card.rank1 { transform: translateY(-10px); }
 
 .avatar {
   width: 54px;
@@ -120,7 +122,6 @@ LEADERBOARD_CSS = """
   font-size: 20px;
   font-weight: 900;
   background: rgba(255,255,255,0.10);
-  color: white;
   margin-bottom: 8px;
 }
 
@@ -145,7 +146,7 @@ LEADERBOARD_CSS = """
 """
 
 # -----------------------------
-# DB CONNECTION (pandas-safe)
+# DB CONNECTION
 # -----------------------------
 def get_pandas_connection():
     return psycopg2.connect(
@@ -157,12 +158,31 @@ def get_pandas_connection():
     )
 
 # -----------------------------
-# Helpers
+# LAST UPDATED (WIB)
+# -----------------------------
+@st.cache_data(ttl=60)
+def get_last_updated_wib():
+    conn = get_pandas_connection()
+    df = pd.read_sql_query(
+        f"SELECT MAX(last_updated) AS last_updated FROM {TABLE_FULL}",
+        conn
+    )
+    conn.close()
+
+    ts = df.loc[0, "last_updated"]
+    if pd.isna(ts):
+        return None
+
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+
+    return ts.astimezone(WIB)
+
+# -----------------------------
+# HELPERS
 # -----------------------------
 def _format_idr(n):
-    if pd.isna(n):
-        return ""
-    return f"Rp{int(n):,}".replace(",", ".")
+    return "" if pd.isna(n) else f"Rp{int(n):,}".replace(",", ".")
 
 def _podium_card(rank: int, row: pd.Series) -> str:
     name = row["Creator Name"]
@@ -183,15 +203,14 @@ def _podium_card(rank: int, row: pd.Series) -> str:
     """
 
 # -----------------------------
-# Level Info Renderer
+# INFORMATION BOX (UNIFIED TITLE)
 # -----------------------------
-def _render_level_info(level: str):
+def _render_information_box(level: str):
     if level == "All":
         return
 
-    configs = {
+    content = {
         "0": """
-        <h4>LEVEL L0 — Silakan Cek Rank Ini</h4>
         <table>
           <tr><th>Layer</th><th>Minimal Penjualan</th><th>Hadiah</th><th>Minimal Video</th></tr>
           <tr><td>Layer 1</td><td>Rp2.500.000</td><td>Rp150.000</td><td>20</td></tr>
@@ -200,7 +219,6 @@ def _render_level_info(level: str):
         <div class="level-note">Periode Desember · Redemption GMV · 30 Kreator</div>
         """,
         "1": """
-        <h4>LEVEL L1 — Silakan Cek Rank Ini</h4>
         <table>
           <tr><th>Minimal Penjualan</th><th>Hadiah</th></tr>
           <tr><td>Rp8.000.000</td><td>Rp500.000</td></tr>
@@ -208,7 +226,6 @@ def _render_level_info(level: str):
         <div class="level-note">Minimal GMV 8.000.000 · 30 Kreator</div>
         """,
         "2": """
-        <h4>LEVEL L2 — Silakan Cek Rank Ini</h4>
         <table>
           <tr><th>Kriteria</th><th>Nilai</th></tr>
           <tr><td>Gaji Pokok</td><td>Rp750.000</td></tr>
@@ -217,7 +234,6 @@ def _render_level_info(level: str):
         </table>
         """,
         "3": """
-        <h4>LEVEL L3 — Silakan Cek Rank Ini</h4>
         <table>
           <tr><th>Kriteria</th><th>Nilai</th></tr>
           <tr><td>Gaji Pokok</td><td>Rp1.500.000</td></tr>
@@ -226,7 +242,6 @@ def _render_level_info(level: str):
         </table>
         """,
         "4": """
-        <h4>LEVEL L4 — Silakan Cek Rank Ini</h4>
         <table>
           <tr><th>Kriteria</th><th>Nilai</th></tr>
           <tr><td>Gaji Pokok</td><td>Rp2.000.000</td></tr>
@@ -236,13 +251,21 @@ def _render_level_info(level: str):
         """
     }
 
-    st.markdown(f'<div class="level-info">{configs[level]}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="level-info">
+          <h4>Information Box</h4>
+          {content[level]}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # -----------------------------
-# Data loaders
+# DATA LOADERS
 # -----------------------------
 @st.cache_data(ttl=60)
-def _load_usernames(level: str):
+def _load_usernames(level):
     conn = get_pandas_connection()
     where = "" if level == "All" else "WHERE level = %s"
     df = pd.read_sql_query(
@@ -254,9 +277,8 @@ def _load_usernames(level: str):
     return ["All"] + df["username"].tolist()
 
 @st.cache_data(ttl=60)
-def _load_leaderboard(level: str, username: str):
-    where = []
-    params = []
+def _load_leaderboard(level, username):
+    where, params = [], []
 
     if level != "All":
         where.append("level = %s")
@@ -287,29 +309,32 @@ def _load_leaderboard(level: str, username: str):
     conn.close()
 
     df.insert(0, "Rank", range(1, len(df) + 1))
-    df = df.rename(columns={
+    return df.rename(columns={
         "creator_name": "Creator Name",
+        "username": "Username",
+        "post_count": "Post",
         "redemption_gmv_idr": "GMV",
         "hadiah_idr": "Hadiah",
-        "post_count": "Post",
-        "username": "Username",
         "status": "Status"
     })
-    return df
 
 # -----------------------------
 # UI
 # -----------------------------
 def render():
+    last_ts = get_last_updated_wib()
+    last_ts_str = last_ts.strftime("%d %b %Y · %H:%M WIB") if last_ts else ""
+
     st.markdown(LEADERBOARD_CSS, unsafe_allow_html=True)
     st.markdown('<div class="leaderboard-wrap">', unsafe_allow_html=True)
 
-    st.markdown("""
+    st.markdown(f"""
     <div class="lb-title">
       <div>
         <h2>Leaderboard</h2>
         <p class="lb-sub">Sorted by GMV · Top 3 podium</p>
       </div>
+      <div class="last-updated">Last updated: {last_ts_str}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -319,12 +344,11 @@ def render():
     with col2:
         username = st.selectbox("Username", _load_usernames(level))
 
-    _render_level_info(level)
+    _render_information_box(level)
 
     df = _load_leaderboard(level, username)
-
     if df.empty:
-        st.warning("No data")
+        st.warning("No data available.")
         return
 
     top3 = df.head(3)
@@ -338,8 +362,8 @@ def render():
 
     df["GMV"] = df["GMV"].apply(_format_idr)
     df["Hadiah"] = df["Hadiah"].apply(_format_idr)
-
     st.dataframe(df, use_container_width=True, hide_index=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 render()
