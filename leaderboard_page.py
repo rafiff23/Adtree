@@ -22,116 +22,124 @@ LEADERBOARD_CSS = """
 
 /* Header */
 .lb-title {
-  display:flex; align-items:center; justify-content:space-between;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
   margin-bottom: 10px;
 }
 .lb-title h2 {
-  margin: 0; color: rgba(255,255,255,0.92);
-  font-weight: 800; letter-spacing: 0.2px;
+  margin: 0;
+  color: rgba(255,255,255,0.92);
+  font-weight: 800;
 }
 .lb-sub {
-  margin: 0; margin-top: 4px;
+  margin-top: 4px;
   color: rgba(255,255,255,0.55);
   font-size: 13px;
 }
 
-/* Podium row */
+/* Level info box */
+.level-info {
+  margin-top: 14px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+.level-info h4 {
+  margin: 0 0 8px 0;
+  font-weight: 800;
+  color: rgba(255,255,255,0.92);
+}
+
+.level-info table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.level-info th,
+.level-info td {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+  text-align: left;
+}
+
+.level-info th {
+  color: rgba(255,255,255,0.55);
+  font-weight: 700;
+}
+
+.level-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+}
+
+/* Podium */
 .podium {
   display:flex;
   gap: 14px;
   align-items:flex-end;
   justify-content:space-between;
-  margin-top: 12px;
   margin-bottom: 16px;
 }
 
 .card {
   flex: 1;
   border-radius: 18px;
-  padding: 14px 14px 14px 14px;
+  padding: 14px;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.08);
   box-shadow: 0 10px 24px rgba(0,0,0,0.30);
-  backdrop-filter: blur(8px);
   position: relative;
 }
 
-.card.rank1 { 
+.card.rank1 {
   transform: translateY(-10px);
   background: linear-gradient(180deg, rgba(255,200,0,0.14), rgba(255,255,255,0.05));
-  border: 1px solid rgba(255,200,0,0.30);
-}
-.card.rank2 {
-  background: linear-gradient(180deg, rgba(100,180,255,0.14), rgba(255,255,255,0.05));
-  border: 1px solid rgba(100,180,255,0.26);
-}
-.card.rank3 {
-  background: linear-gradient(180deg, rgba(70,255,170,0.14), rgba(255,255,255,0.05));
-  border: 1px solid rgba(70,255,170,0.22);
 }
 
-/* Avatar */
+.card.rank2 {
+  background: linear-gradient(180deg, rgba(100,180,255,0.14), rgba(255,255,255,0.05));
+}
+
+.card.rank3 {
+  background: linear-gradient(180deg, rgba(70,255,170,0.14), rgba(255,255,255,0.05));
+}
+
 .avatar {
-  width: 54px; height: 54px;
+  width: 54px;
+  height: 54px;
   border-radius: 999px;
-  display:flex; align-items:center; justify-content:center;
+  display:flex;
+  align-items:center;
+  justify-content:center;
   font-size: 20px;
   font-weight: 900;
-  color: rgba(255,255,255,0.92);
   background: rgba(255,255,255,0.10);
-  border: 2px solid rgba(255,255,255,0.15);
+  color: white;
   margin-bottom: 8px;
 }
 
 .badge {
-  position:absolute; top: 12px; right: 12px;
-  font-size: 12px; font-weight: 800;
+  position:absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 12px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.10);
-  color: rgba(255,255,255,0.80);
+  background: rgba(255,255,255,0.10);
 }
 
-.name {
-  font-weight: 800;
-  color: rgba(255,255,255,0.92);
-  margin-top: 2px;
-  margin-bottom: 2px;
-}
-.user {
-  color: rgba(255,255,255,0.55);
-  font-size: 12px;
-  margin-bottom: 10px;
-}
-.score {
-  font-size: 22px;
-  font-weight: 900;
-  letter-spacing: 0.3px;
-  color: rgba(255,255,255,0.94);
-}
-
-/* Crown for #1 */
 .crown {
   position:absolute;
   top: -18px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 26px;
-}
-
-/* Filters row */
-.filters {
-  display:flex;
-  gap: 14px;
-  margin-top: 12px;
-  margin-bottom: 10px;
-}
-
-.small-note {
-  color: rgba(255,255,255,0.55);
-  font-size: 12px;
-  margin-top: 6px;
 }
 </style>
 """
@@ -140,10 +148,6 @@ LEADERBOARD_CSS = """
 # DB CONNECTION (pandas-safe)
 # -----------------------------
 def get_pandas_connection():
-    """
-    Connection WITHOUT RealDictCursor.
-    This keeps pd.read_sql_query() stable.
-    """
     return psycopg2.connect(
         host=os.getenv("PG_HOST", "localhost"),
         port=os.getenv("PG_PORT", "5432"),
@@ -158,197 +162,184 @@ def get_pandas_connection():
 def _format_idr(n):
     if pd.isna(n):
         return ""
-    try:
-        return f"Rp{int(n):,}".replace(",", ".")
-    except Exception:
-        return str(n)
+    return f"Rp{int(n):,}".replace(",", ".")
 
 def _podium_card(rank: int, row: pd.Series) -> str:
-    """
-    Creates a single HTML card for top 1/2/3.
-    Uses initials (no profile images in DB).
-    """
-    name = row.get("Creator Name", "") or ""
-    username = row.get("Username", "") or ""
-    gmv = _format_idr(row.get("GMV"))
-
-    initial = (
-        (str(name).strip()[:1] if str(name).strip() else (str(username).strip()[:1] if str(username).strip() else "?"))
-    ).upper()
-
-    rank_class = f"rank{rank}"
+    name = row["Creator Name"]
+    username = row["Username"]
+    gmv = _format_idr(row["GMV"])
+    initial = (name[:1] if name else username[:1]).upper()
     crown = '<div class="crown">👑</div>' if rank == 1 else ""
 
     return f"""
-      <div class="card {rank_class}">
-        {crown}
-        <div class="badge">#{rank}</div>
-        <div class="avatar">{initial}</div>
-        <div class="name">{name if name else "-"}</div>
-        <div class="user">@{username if username else "-"}</div>
-        <div class="score">{gmv}</div>
-      </div>
+    <div class="card rank{rank}">
+      {crown}
+      <div class="badge">#{rank}</div>
+      <div class="avatar">{initial}</div>
+      <div><strong>{name}</strong></div>
+      <div style="opacity:.6">@{username}</div>
+      <div style="font-size:20px;font-weight:900;margin-top:6px">{gmv}</div>
+    </div>
     """
+
+# -----------------------------
+# Level Info Renderer
+# -----------------------------
+def _render_level_info(level: str):
+    if level == "All":
+        return
+
+    configs = {
+        "0": """
+        <h4>LEVEL L0 — Silakan Cek Rank Ini</h4>
+        <table>
+          <tr><th>Layer</th><th>Minimal Penjualan</th><th>Hadiah</th><th>Minimal Video</th></tr>
+          <tr><td>Layer 1</td><td>Rp2.500.000</td><td>Rp150.000</td><td>20</td></tr>
+          <tr><td>Layer 2</td><td>Rp5.000.000</td><td>Rp250.000</td><td>20</td></tr>
+        </table>
+        <div class="level-note">Periode Desember · Redemption GMV · 30 Kreator</div>
+        """,
+        "1": """
+        <h4>LEVEL L1 — Silakan Cek Rank Ini</h4>
+        <table>
+          <tr><th>Minimal Penjualan</th><th>Hadiah</th></tr>
+          <tr><td>Rp8.000.000</td><td>Rp500.000</td></tr>
+        </table>
+        <div class="level-note">Minimal GMV 8.000.000 · 30 Kreator</div>
+        """,
+        "2": """
+        <h4>LEVEL L2 — Silakan Cek Rank Ini</h4>
+        <table>
+          <tr><th>Kriteria</th><th>Nilai</th></tr>
+          <tr><td>Gaji Pokok</td><td>Rp750.000</td></tr>
+          <tr><td>Minimal Penjualan</td><td>Rp45.000.000</td></tr>
+          <tr><td>Kuota Kreator</td><td>30</td></tr>
+        </table>
+        """,
+        "3": """
+        <h4>LEVEL L3 — Silakan Cek Rank Ini</h4>
+        <table>
+          <tr><th>Kriteria</th><th>Nilai</th></tr>
+          <tr><td>Gaji Pokok</td><td>Rp1.500.000</td></tr>
+          <tr><td>Minimal Penjualan</td><td>Rp75.000.000</td></tr>
+          <tr><td>Kuota Kreator</td><td>4</td></tr>
+        </table>
+        """,
+        "4": """
+        <h4>LEVEL L4 — Silakan Cek Rank Ini</h4>
+        <table>
+          <tr><th>Kriteria</th><th>Nilai</th></tr>
+          <tr><td>Gaji Pokok</td><td>Rp2.000.000</td></tr>
+          <tr><td>Minimal Penjualan</td><td>Rp200.000.000</td></tr>
+          <tr><td>Kuota Kreator</td><td>1</td></tr>
+        </table>
+        """
+    }
+
+    st.markdown(f'<div class="level-info">{configs[level]}</div>', unsafe_allow_html=True)
 
 # -----------------------------
 # Data loaders
 # -----------------------------
 @st.cache_data(ttl=60)
-def _load_usernames(level_filter: str) -> list[str]:
-    where = []
-    params = []
-
-    if level_filter != "All":
-        where.append("level = %s")
-        params.append(int(level_filter))
-
-    where_sql = "WHERE " + " AND ".join(where) if where else ""
-
-    sql = f"""
-        SELECT DISTINCT username
-        FROM {TABLE_FULL}
-        {where_sql}
-        ORDER BY username;
-    """
-
+def _load_usernames(level: str):
     conn = get_pandas_connection()
-    try:
-        dfu = pd.read_sql_query(sql, conn, params=params)
-    finally:
-        conn.close()
-
-    usernames = dfu["username"].dropna().astype(str).tolist()
-    return ["All"] + usernames
+    where = "" if level == "All" else "WHERE level = %s"
+    df = pd.read_sql_query(
+        f"SELECT DISTINCT username FROM {TABLE_FULL} {where} ORDER BY username",
+        conn,
+        params=None if level == "All" else [int(level)]
+    )
+    conn.close()
+    return ["All"] + df["username"].tolist()
 
 @st.cache_data(ttl=60)
-def _load_leaderboard(level_filter: str, username_selected: str) -> pd.DataFrame:
-    """
-    Pull rows, apply filters, order by GMV desc.
-    Rank computed on filtered result.
-    """
+def _load_leaderboard(level: str, username: str):
     where = []
     params = []
 
-    if level_filter != "All":
+    if level != "All":
         where.append("level = %s")
-        params.append(int(level_filter))
-
-    # Username dropdown -> exact match
-    if username_selected and username_selected != "All":
+        params.append(int(level))
+    if username != "All":
         where.append("username = %s")
-        params.append(username_selected)
+        params.append(username)
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
-    sql = f"""
+    conn = get_pandas_connection()
+    df = pd.read_sql_query(
+        f"""
         SELECT
-            creator_name,
-            username,
-            post_count,
-            redemption_gmv_idr,
-            status,
-            hadiah_idr
+          creator_name,
+          username,
+          post_count,
+          redemption_gmv_idr,
+          hadiah_idr,
+          status
         FROM {TABLE_FULL}
         {where_sql}
-        ORDER BY redemption_gmv_idr DESC NULLS LAST,
-                 hadiah_idr DESC NULLS LAST,
-                 post_count DESC NULLS LAST;
-    """
+        ORDER BY redemption_gmv_idr DESC NULLS LAST
+        """,
+        conn,
+        params=params
+    )
+    conn.close()
 
-    conn = get_pandas_connection()
-    try:
-        df = pd.read_sql_query(sql, conn, params=params)
-    finally:
-        conn.close()
-
-    # Compute rank based on sorted order
     df.insert(0, "Rank", range(1, len(df) + 1))
-
-    # Rename for UI
     df = df.rename(columns={
+        "creator_name": "Creator Name",
         "redemption_gmv_idr": "GMV",
         "hadiah_idr": "Hadiah",
         "post_count": "Post",
-        "creator_name": "Creator Name",
         "username": "Username",
-        "status": "Status",
+        "status": "Status"
     })
-
     return df
 
 # -----------------------------
-# UI RENDER
+# UI
 # -----------------------------
 def render():
     st.markdown(LEADERBOARD_CSS, unsafe_allow_html=True)
     st.markdown('<div class="leaderboard-wrap">', unsafe_allow_html=True)
 
-    # Header
     st.markdown("""
-      <div class="lb-title">
-        <div>
-          <h2>Leaderboard</h2>
-          <p class="lb-sub">Sorted by GMV (highest → lowest). Top 3 shown in podium + also included in the table.</p>
-        </div>
+    <div class="lb-title">
+      <div>
+        <h2>Leaderboard</h2>
+        <p class="lb-sub">Sorted by GMV · Top 3 podium</p>
       </div>
+    </div>
     """, unsafe_allow_html=True)
 
-    # Utilities
-    c_util_1, c_util_2 = st.columns([1, 5])
-    with c_util_1:
-        if st.button("Clear cache"):
-            st.cache_data.clear()
-            st.rerun()
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        level = st.selectbox("Level", ["All", "0", "1", "2", "3", "4"])
+    with col2:
+        username = st.selectbox("Username", _load_usernames(level))
 
-    # Filters
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        level_filter = st.selectbox("Level", ["All", "0", "1", "2", "3", "4"], index=0)
+    _render_level_info(level)
 
-    usernames = _load_usernames(level_filter)
-    with c2:
-        username_selected = st.selectbox("Username", usernames, index=0)
-
-    df = _load_leaderboard(level_filter, username_selected)
+    df = _load_leaderboard(level, username)
 
     if df.empty:
-        st.warning("No rows found for your filter.")
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.warning("No data")
         return
 
-    # Podium top 3
-    top3 = df.head(3).copy()
-
-    # Visual order: #2 left, #1 middle, #3 right
-    cards_html = []
-    for r in [2, 1, 3]:
-        if len(top3) >= r:
-            cards_html.append(_podium_card(r, top3.iloc[r - 1]))
-        else:
-            cards_html.append(
-                f'<div class="card rank{r}"><div class="badge">#{r}</div><div class="avatar">?</div>'
-                f'<div class="name">-</div><div class="user">@-</div><div class="score">-</div></div>'
-            )
-
+    top3 = df.head(3)
     st.markdown(f"""
-      <div class="podium">
-        {cards_html[0]}
-        {cards_html[1]}
-        {cards_html[2]}
-      </div>
+    <div class="podium">
+      {_podium_card(2, top3.iloc[1]) if len(top3)>1 else ""}
+      {_podium_card(1, top3.iloc[0])}
+      {_podium_card(3, top3.iloc[2]) if len(top3)>2 else ""}
+    </div>
     """, unsafe_allow_html=True)
 
-    # Table
-    st.subheader("All Creators")
+    df["GMV"] = df["GMV"].apply(_format_idr)
+    df["Hadiah"] = df["Hadiah"].apply(_format_idr)
 
-    df_table = df.copy()
-    df_table["GMV"] = df_table["GMV"].apply(_format_idr)
-    df_table["Hadiah"] = df_table["Hadiah"].apply(_format_idr)
-
-    st.dataframe(df_table, use_container_width=True, hide_index=True)
-
-    st.markdown('<p class="small-note">Tip: If you’re importing multiple times, TRUNCATE first so the table doesn’t duplicate rows.</p>', unsafe_allow_html=True)
+    st.dataframe(df, use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Run
 render()
