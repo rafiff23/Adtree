@@ -2,32 +2,45 @@ import re
 import pandas as pd
 import streamlit as st
 from psycopg2.extras import execute_values
+from db import get_connection
 
-from db import get_connection  # ✅ reuse existing connection
+SCHEMA_NAME = "leaderboard"
 
-SCHEMA_NAME = "leaderboard"  # (spelled exactly as you requested)
-TABLE_NAME = "creator_dec_leaderboard_all_level"
-FULL_TABLE = f"{SCHEMA_NAME}.{TABLE_NAME}"
+# =========================================
+# 1) TABLE MAP (3 import modes)
+# =========================================
+IMPORT_MODES = {
+    "Main Leaderboard": {
+        "table": "creator_dec_leaderboard_all_level",
+        "required_cols": ["No", "Creator Name", "Username", "Post", "Redemption GMV", "Status", "Hadiah", "Level"],
+    },
+    "All Industry Bonus": {
+        "table": "creator_dec_leaderboard_all_industry_bonus",
+        "required_cols": [
+            "Username", "GMV", "Order Accommodation", "Order Dining", "Order things to Do",
+            "Syarat penjualan", "Kurang penjualan", "Status", "Bonus"
+        ],
+    },
+    "Dining Bonus": {
+        "table": "creator_dec_leaderboard_dining_bonus",
+        "required_cols": ["Creator Name", "Penjualan Dining", "Syarat penjualan", "Kurang penjualan", "Status", "Bonus"],
+    },
+}
 
-REQUIRED_COLS = [
-    "No",
-    "Creator Name",
-    "Username",
-    "Post",
-    "Redemption GMV",
-    "Status",
-    "Hadiah",
-    "Level",
-]
+def full_table(table_name: str) -> str:
+    return f"{SCHEMA_NAME}.{table_name}"
 
+# =========================================
+# 2) CLEANERS
+# =========================================
 def _clean_int(v):
     if pd.isna(v):
         return None
     s = str(v).strip()
     if s == "" or s.lower() in ("nan", "none"):
         return None
-    s = re.sub(r"[,\s]", "", s)
-    s = re.sub(r"[^0-9\-]", "", s)
+    s = re.sub(r"[,\s]", "", s)           # remove commas/spaces
+    s = re.sub(r"[^0-9\-]", "", s)        # keep digits and minus
     if s in ("", "-"):
         return None
     try:
@@ -36,16 +49,25 @@ def _clean_int(v):
         return None
 
 def _clean_idr(v):
-    """'Rp334,022,643' -> 334022643 (BIGINT)"""
+    """
+    Works for:
+    - 'Rp334,022,643' -> 334022643
+    - '56,000,000' -> 56000000
+    - '-Rp21,455,789' -> -21455789
+    - 'Rp0' -> 0
+    """
     if pd.isna(v):
         return None
     s = str(v).strip()
     if s == "" or s.lower() in ("nan", "none"):
         return None
+
     s = s.replace("Rp", "").replace("rp", "")
-    s = re.sub(r"[.\s]", "", s)  # remove dots/spaces
-    s = s.replace(",", "")
+    s = s.replace(".", "")        # in case using dots
+    s = s.replace(" ", "")
+    s = s.replace(",", "")        # remove thousands separator
     s = re.sub(r"[^0-9\-]", "", s)
+
     if s in ("", "-"):
         return None
     try:
@@ -53,92 +75,203 @@ def _clean_idr(v):
     except:
         return None
 
-def _normalize(df: pd.DataFrame) -> pd.DataFrame:
-    # Case-insensitive column matching
+# =========================================
+# 3) NORMALIZER (case-insensitive picker)
+# =========================================
+def _pick_col(df: pd.DataFrame, col_name: str) -> str:
     col_map = {c.strip().lower(): c for c in df.columns}
+    key = col_name.strip().lower()
+    if key not in col_map:
+        raise ValueError(f"Missing required column: '{col_name}'")
+    return col_map[key]
 
-    def pick(col_name: str) -> str:
-        key = col_name.strip().lower()
-        if key not in col_map:
-            raise ValueError(f"Missing required column: '{col_name}'")
-        return col_map[key]
-
+def _normalize_main_leaderboard(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame()
-    out["rank_no"] = df[pick("No")].apply(_clean_int)
-    out["creator_name"] = df[pick("Creator Name")].astype(str).str.strip()
-    out["username"] = df[pick("Username")].astype(str).str.strip()
-    out["post_count"] = df[pick("Post")].apply(_clean_int)
-    out["redemption_gmv_idr"] = df[pick("Redemption GMV")].apply(_clean_idr)
-    out["status"] = df[pick("Status")].astype(str).str.strip()
-    out["hadiah_idr"] = df[pick("Hadiah")].apply(_clean_idr)
-    out["level"] = df[pick("Level")].apply(_clean_int)
+    out["rank_no"] = df[_pick_col(df, "No")].apply(_clean_int)
+    out["creator_name"] = df[_pick_col(df, "Creator Name")].astype(str).str.strip()
+    out["username"] = df[_pick_col(df, "Username")].astype(str).str.strip()
+    out["post_count"] = df[_pick_col(df, "Post")].apply(_clean_int)
+    out["redemption_gmv_idr"] = df[_pick_col(df, "Redemption GMV")].apply(_clean_idr)
+    out["status"] = df[_pick_col(df, "Status")].astype(str).str.strip()
+    out["hadiah_idr"] = df[_pick_col(df, "Hadiah")].apply(_clean_idr)
+    out["level"] = df[_pick_col(df, "Level")].apply(_clean_int)
 
-    # cleanup small annoying artifacts
     out["creator_name"] = out["creator_name"].replace({".": None, "": None})
     out["username"] = out["username"].replace({".": None, "": None})
-
     return out
 
-def _ensure_schema_and_table(cur):
+def _normalize_all_industry_bonus(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame()
+    out["username"] = df[_pick_col(df, "Username")].astype(str).str.strip()
+    out["gmv_idr"] = df[_pick_col(df, "GMV")].apply(_clean_idr)
+    out["order_accommodation"] = df[_pick_col(df, "Order Accommodation")].apply(_clean_int)
+    out["order_dining"] = df[_pick_col(df, "Order Dining")].apply(_clean_int)
+    out["order_things_to_do"] = df[_pick_col(df, "Order things to Do")].apply(_clean_int)
+    out["syarat_penjualan_idr"] = df[_pick_col(df, "Syarat penjualan")].apply(_clean_idr)
+    out["kurang_penjualan_idr"] = df[_pick_col(df, "Kurang penjualan")].apply(_clean_idr)
+    out["status"] = df[_pick_col(df, "Status")].astype(str).str.strip()
+    out["bonus_idr"] = df[_pick_col(df, "Bonus")].apply(_clean_idr)
+
+    out["username"] = out["username"].replace({".": None, "": None})
+    return out
+
+def _normalize_dining_bonus(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame()
+    out["creator_name"] = df[_pick_col(df, "Creator Name")].astype(str).str.strip()
+    out["penjualan_dining_idr"] = df[_pick_col(df, "Penjualan Dining")].apply(_clean_idr)
+    out["syarat_penjualan_idr"] = df[_pick_col(df, "Syarat penjualan")].apply(_clean_idr)
+    out["kurang_penjualan_idr"] = df[_pick_col(df, "Kurang penjualan")].apply(_clean_idr)
+    out["status"] = df[_pick_col(df, "Status")].astype(str).str.strip()
+    out["bonus_idr"] = df[_pick_col(df, "Bonus")].apply(_clean_idr)
+
+    out["creator_name"] = out["creator_name"].replace({".": None, "": None})
+    return out
+
+# =========================================
+# 4) DDL per table + ensure last_updated
+# =========================================
+def _ensure_schema(cur):
     cur.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME};")
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {FULL_TABLE} (
-            rank_no              INTEGER,
-            creator_name         TEXT,
-            username             TEXT,
-            post_count           INTEGER,
-            redemption_gmv_idr   BIGINT,
-            status               TEXT,
-            hadiah_idr           BIGINT,
-            level                INTEGER,
-            imported_at          TIMESTAMPTZ DEFAULT NOW()
-        );
-    """)
 
-def _truncate(cur):
-    cur.execute(f"TRUNCATE TABLE {FULL_TABLE};")
+def _ensure_table(cur, mode_key: str):
+    tbl = full_table(IMPORT_MODES[mode_key]["table"])
 
-def _insert(cur, df_norm: pd.DataFrame):
-    cols = [
-        "rank_no",
-        "creator_name",
-        "username",
-        "post_count",
-        "redemption_gmv_idr",
-        "status",
-        "hadiah_idr",
-        "level",
-    ]
+    if mode_key == "Main Leaderboard":
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tbl} (
+                rank_no              INTEGER,
+                creator_name         TEXT,
+                username             TEXT,
+                post_count           INTEGER,
+                redemption_gmv_idr   BIGINT,
+                status               TEXT,
+                hadiah_idr           BIGINT,
+                level                INTEGER,
+                imported_at          TIMESTAMPTZ DEFAULT NOW(),
+                last_updated         TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        # if table already existed before last_updated was added
+        cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS last_updated TIMESTAMPTZ DEFAULT NOW();")
+
+    elif mode_key == "All Industry Bonus":
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tbl} (
+                username                TEXT,
+                gmv_idr                 BIGINT,
+                order_accommodation     INTEGER,
+                order_dining            INTEGER,
+                order_things_to_do      INTEGER,
+                syarat_penjualan_idr    BIGINT,
+                kurang_penjualan_idr    BIGINT,
+                status                  TEXT,
+                bonus_idr               BIGINT,
+                imported_at             TIMESTAMPTZ DEFAULT NOW(),
+                last_updated            TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS last_updated TIMESTAMPTZ DEFAULT NOW();")
+
+    elif mode_key == "Dining Bonus":
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tbl} (
+                creator_name            TEXT,
+                penjualan_dining_idr    BIGINT,
+                syarat_penjualan_idr    BIGINT,
+                kurang_penjualan_idr    BIGINT,
+                status                  TEXT,
+                bonus_idr               BIGINT,
+                imported_at             TIMESTAMPTZ DEFAULT NOW(),
+                last_updated            TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS last_updated TIMESTAMPTZ DEFAULT NOW();")
+
+def _truncate(cur, mode_key: str):
+    tbl = full_table(IMPORT_MODES[mode_key]["table"])
+    cur.execute(f"TRUNCATE TABLE {tbl};")
+
+def _insert(cur, mode_key: str, df_norm: pd.DataFrame):
+    tbl = full_table(IMPORT_MODES[mode_key]["table"])
+
+    if mode_key == "Main Leaderboard":
+        cols = ["rank_no","creator_name","username","post_count","redemption_gmv_idr","status","hadiah_idr","level"]
+
+    elif mode_key == "All Industry Bonus":
+        cols = [
+            "username","gmv_idr","order_accommodation","order_dining","order_things_to_do",
+            "syarat_penjualan_idr","kurang_penjualan_idr","status","bonus_idr"
+        ]
+
+    elif mode_key == "Dining Bonus":
+        cols = ["creator_name","penjualan_dining_idr","syarat_penjualan_idr","kurang_penjualan_idr","status","bonus_idr"]
+
     rows = [tuple(None if pd.isna(x) else x for x in r) for r in df_norm[cols].to_numpy()]
-    sql = f"INSERT INTO {FULL_TABLE} ({', '.join(cols)}) VALUES %s"
+    sql = f"INSERT INTO {tbl} ({', '.join(cols)}) VALUES %s"
     execute_values(cur, sql, rows, page_size=5000)
 
+# =========================================
+# 5) UI
+# =========================================
 def render():
     st.header("Leaderboard Import (CSV → Postgres)")
-    st.caption(f"Target table: `{FULL_TABLE}` (auto-create schema + table, then truncate + insert)")
+    st.caption("Pilih dulu jenis CSV yang mau di-import. Semua masuk schema `leaderboard` tapi table beda-beda.")
 
-    uploaded = st.file_uploader("Upload CSV", type=["csv"])
+    # ---- 3 buttons side-by-side (mode selection)
+    if "import_mode" not in st.session_state:
+        st.session_state.import_mode = "Main Leaderboard"
+
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        if st.button("Main Leaderboard", use_container_width=True):
+            st.session_state.import_mode = "Main Leaderboard"
+    with b2:
+        if st.button("All Industry Bonus", use_container_width=True):
+            st.session_state.import_mode = "All Industry Bonus"
+    with b3:
+        if st.button("Dining Bonus", use_container_width=True):
+            st.session_state.import_mode = "Dining Bonus"
+
+    mode = st.session_state.import_mode
+    tbl = full_table(IMPORT_MODES[mode]["table"])
+    required = IMPORT_MODES[mode]["required_cols"]
+
+    st.info(f"Selected: **{mode}** → Target table: `{tbl}`")
+
+    uploaded = st.file_uploader(f"Upload CSV for: {mode}", type=["csv"])
 
     if uploaded is None:
-        st.info("Upload the leaderboard CSV to start.")
+        st.info("Upload CSV untuk mulai.")
         return
 
     df = pd.read_csv(uploaded)
 
-    # quick check
-    missing = [c for c in REQUIRED_COLS if c.lower() not in [x.lower() for x in df.columns]]
+    # ---- validate columns (case-insensitive)
+    missing = [c for c in required if c.lower() not in [x.strip().lower() for x in df.columns]]
     if missing:
         st.error(f"CSV missing columns: {missing}")
         st.write("Found columns:", list(df.columns))
         return
 
     st.subheader("Raw Preview")
+    st.write("Columns:", list(df.columns))
     st.dataframe(df.head(20), use_container_width=True)
 
-    df_norm = _normalize(df)
+    # ---- normalize based on mode
+    try:
+        if mode == "Main Leaderboard":
+            df_norm = _normalize_main_leaderboard(df)
+        elif mode == "All Industry Bonus":
+            df_norm = _normalize_all_industry_bonus(df)
+        else:
+            df_norm = _normalize_dining_bonus(df)
+    except Exception as e:
+        st.error(f"Normalize failed: {e}")
+        return
 
     st.subheader("Normalized Preview (will be inserted)")
     st.dataframe(df_norm.head(20), use_container_width=True)
+    st.caption(f"Rows to insert: {len(df_norm):,}")
 
     clear_first = st.checkbox("Clear table first (TRUNCATE)", value=True)
 
@@ -147,11 +280,13 @@ def render():
         try:
             with conn:
                 with conn.cursor() as cur:
-                    _ensure_schema_and_table(cur)
+                    _ensure_schema(cur)
+                    _ensure_table(cur, mode)
                     if clear_first:
-                        _truncate(cur)
-                    _insert(cur, df_norm)
-            st.success(f"Done. Inserted {len(df_norm):,} rows into {FULL_TABLE}.")
+                        _truncate(cur, mode)
+                    _insert(cur, mode, df_norm)
+
+            st.success(f"Done. Inserted {len(df_norm):,} rows into {tbl}.")
         except Exception as e:
             st.error(f"Import failed: {e}")
         finally:
