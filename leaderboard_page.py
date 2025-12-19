@@ -347,7 +347,7 @@ def _render_slots(level: str, df_level: pd.DataFrame):
 # -----------------------------
 def render():
     st.markdown(LEADERBOARD_CSS, unsafe_allow_html=True)
-    st.markdown('<div class="leaderboard v2-wrap">', unsafe_allow_html=True)
+    st.markdown('<div class="leaderboard-wrap">', unsafe_allow_html=True)
 
     # Last updated WIB
     last_ts = get_last_updated_wib()
