@@ -4,6 +4,7 @@ import streamlit as st
 import psycopg2
 from datetime import timezone
 from zoneinfo import ZoneInfo
+from textwrap import dedent
 
 TABLE_FULL = "leaderboard.creator_dec_leaderboard_all_level"
 WIB = ZoneInfo("Asia/Jakarta")
@@ -96,7 +97,7 @@ LEADERBOARD_CSS = """
   border: 1px solid rgba(255,255,255,0.08);
 }
 
-/* Filled = blue (best blue + subtle glow) */
+/* Filled = blue */
 .slot-filled {
   background: linear-gradient(180deg, rgba(40,120,255,0.28), rgba(255,255,255,0.06));
   border: 1px solid rgba(40,120,255,0.55);
@@ -141,7 +142,6 @@ LEADERBOARD_CSS = """
   color: rgba(255,255,255,0.78);
 }
 
-/* small note */
 .small-note {
   color: rgba(255,255,255,0.55);
   font-size: 12px;
@@ -185,11 +185,14 @@ def _slot_count_by_level(level: str) -> int:
 def _eligible_statuses(level: str) -> set:
     if level == "0":
         return {"Layer 1", "Layer 2"}
-    # level 1-4
     return {"Dapat Hadiah"}
 
 def _safe_str(x):
     return "" if pd.isna(x) else str(x)
+
+def _html(s: str) -> str:
+    """Remove indentation so Streamlit Markdown doesn't treat it as code block."""
+    return dedent(s).strip()
 
 # -----------------------------
 # LAST UPDATED (WIB)
@@ -209,7 +212,6 @@ def get_last_updated_wib():
     if pd.isna(ts):
         return None
 
-    # if tz-naive, assume UTC
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
 
@@ -220,7 +222,6 @@ def get_last_updated_wib():
 # -----------------------------
 @st.cache_data(ttl=60)
 def _load_usernames(level: str) -> list[str]:
-    # username dropdown only for table usability
     conn = get_pandas_connection()
     try:
         df = pd.read_sql_query(
@@ -241,10 +242,6 @@ def _load_usernames(level: str) -> list[str]:
 
 @st.cache_data(ttl=60)
 def _load_level_data(level: str) -> pd.DataFrame:
-    """
-    Load all rows for a level (no username filter),
-    used for slots & table base.
-    """
     conn = get_pandas_connection()
     try:
         df = pd.read_sql_query(
@@ -268,9 +265,8 @@ def _load_level_data(level: str) -> pd.DataFrame:
     finally:
         conn.close()
 
-    # UI columns
     df.insert(0, "Rank", range(1, len(df) + 1))
-    df = df.rename(columns={
+    return df.rename(columns={
         "creator_name": "Creator Name",
         "username": "Username",
         "post_count": "Post",
@@ -278,19 +274,14 @@ def _load_level_data(level: str) -> pd.DataFrame:
         "hadiah_idr": "Hadiah",
         "status": "Status",
     })
-    return df
 
 def _render_slots(level: str, df_level: pd.DataFrame):
     slot_count = _slot_count_by_level(level)
     eligible = _eligible_statuses(level)
 
-    # eligible creators (fill slots in order by GMV sort)
     df_eligible = df_level[df_level["Status"].isin(eligible)].copy()
-
-    # Take only up to slot_count
     df_fill = df_eligible.head(slot_count)
 
-    # Build HTML cards
     cards = []
     for i in range(slot_count):
         slot_no = i + 1
@@ -302,45 +293,45 @@ def _render_slots(level: str, df_level: pd.DataFrame):
             gmv = _format_idr(r["GMV"])
             status = _safe_str(r["Status"]) or "-"
 
-            cards.append(f"""
-              <div class="slot-card slot-filled">
-                <div class="slot-tag">Slot {slot_no}</div>
-                <div class="slot-title">Filled</div>
-                <div class="slot-name">{name}</div>
-                <div class="slot-user">@{user}</div>
-                <div class="slot-metric">GMV: {gmv}</div>
-                <div class="slot-metric">Status: {status}</div>
-              </div>
-            """)
+            cards.append(_html(f"""
+<div class="slot-card slot-filled">
+  <div class="slot-tag">Slot {slot_no}</div>
+  <div class="slot-title">Filled</div>
+  <div class="slot-name">{name}</div>
+  <div class="slot-user">@{user}</div>
+  <div class="slot-metric">GMV: {gmv}</div>
+  <div class="slot-metric">Status: {status}</div>
+</div>
+"""))
         else:
-            cards.append(f"""
-              <div class="slot-card slot-empty">
-                <div class="slot-tag">Slot {slot_no}</div>
-                <div class="slot-title">Available</div>
-                <div class="slot-name">-</div>
-                <div class="slot-user">@-</div>
-                <div class="slot-metric">GMV: -</div>
-                <div class="slot-metric">Status: -</div>
-              </div>
-            """)
+            cards.append(_html(f"""
+<div class="slot-card slot-empty">
+  <div class="slot-tag">Slot {slot_no}</div>
+  <div class="slot-title">Available</div>
+  <div class="slot-name">-</div>
+  <div class="slot-user">@-</div>
+  <div class="slot-metric">GMV: -</div>
+  <div class="slot-metric">Status: -</div>
+</div>
+"""))
 
     filled_cnt = len(df_fill)
-    note = (
-        "Eligible status: Layer 1 / Layer 2" if level == "0"
-        else "Eligible status: Dapat Hadiah"
-    )
+    note = "Eligible status: Layer 1 / Layer 2" if level == "0" else "Eligible status: Dapat Hadiah"
 
-    st.markdown(f"""
-      <div class="slots-head">
-        <div>
-          <div class="title">Reward Slots</div>
-          <div class="note">{filled_cnt}/{slot_count} filled · {note}</div>
-        </div>
-      </div>
-      <div class="slots-grid">
-        {''.join(cards)}
-      </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        _html(f"""
+<div class="slots-head">
+  <div>
+    <div class="title">Reward Slots</div>
+    <div class="note">{filled_cnt}/{slot_count} filled · {note}</div>
+  </div>
+</div>
+<div class="slots-grid">
+  {''.join(cards)}
+</div>
+"""),
+        unsafe_allow_html=True
+    )
 
 # -----------------------------
 # UI
@@ -349,57 +340,48 @@ def render():
     st.markdown(LEADERBOARD_CSS, unsafe_allow_html=True)
     st.markdown('<div class="leaderboard-wrap">', unsafe_allow_html=True)
 
-    # Last updated WIB
     last_ts = get_last_updated_wib()
     last_ts_str = last_ts.strftime("%d %b %Y · %H:%M WIB") if last_ts else "-"
 
-    # Header
-    st.markdown(f"""
-    <div class="lb-title">
-      <div>
-        <h2>Leaderboard</h2>
-        <p class="lb-sub">Sorted by GMV (highest → lowest). Slots show eligible creators per level.</p>
-      </div>
-      <div class="last-updated">Last updated: {last_ts_str}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        _html(f"""
+<div class="lb-title">
+  <div>
+    <h2>Leaderboard</h2>
+    <p class="lb-sub">Sorted by GMV (highest → lowest). Slots show eligible creators per level.</p>
+  </div>
+  <div class="last-updated">Last updated: {last_ts_str}</div>
+</div>
+"""),
+        unsafe_allow_html=True
+    )
 
-    # Utilities
-    c_util_1, c_util_2 = st.columns([1, 5])
+    c_util_1, _ = st.columns([1, 5])
     with c_util_1:
         if st.button("Clear cache"):
             st.cache_data.clear()
             st.rerun()
 
-    # Filters (NO "All" for level)
     c1, c2 = st.columns([1, 2])
     with c1:
         level = st.selectbox("Level", ["0", "1", "2", "3", "4"], index=0)
-
-    # Username filter only for table
-    usernames = _load_usernames(level)
     with c2:
-        username_selected = st.selectbox("Username (table filter)", usernames, index=0)
+        username_selected = st.selectbox("Username (table filter)", _load_usernames(level), index=0)
 
-    # Load all data for this level once
     df_level = _load_level_data(level)
-
     if df_level.empty:
         st.warning("No rows found for this level.")
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    # Slots (based on eligibility)
     _render_slots(level, df_level)
 
-    # Table (optionally filtered by username)
-    st.subheader("All Creators (Level " + level + ")")
+    st.subheader(f"All Creators (Level {level})")
 
     df_table = df_level.copy()
     if username_selected != "All":
         df_table = df_table[df_table["Username"] == username_selected].copy()
 
-    # format IDR
     df_table["GMV"] = df_table["GMV"].apply(_format_idr)
     df_table["Hadiah"] = df_table["Hadiah"].apply(_format_idr)
 
@@ -408,5 +390,4 @@ def render():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Run
 render()
