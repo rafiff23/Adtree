@@ -10,7 +10,7 @@ TABLE_FULL = "leaderboard.creator_dec_leaderboard_dining_bonus"
 WIB = ZoneInfo("Asia/Jakarta")
 
 # How many reward slots for Dining Bonus
-SLOT_COUNT = 30  # change if needed
+SLOT_COUNT = 10  # change if needed
 
 # -----------------------------
 # STYLE (HTML/CSS) - SAME LOOK

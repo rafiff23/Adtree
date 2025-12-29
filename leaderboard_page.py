@@ -188,7 +188,7 @@ def _slot_count_by_level(level: str) -> int:
     if level in ("0", "1", "2"):
         return 30
     if level == "3":
-        return 4
+        return 2
     if level == "4":
         return 1
     return 0

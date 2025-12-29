@@ -9,7 +9,7 @@ from textwrap import dedent
 TABLE_FULL = "leaderboard.creator_dec_leaderboard_all_industry_bonus"
 WIB = ZoneInfo("Asia/Jakarta")
 
-SLOT_COUNT = 30  # reward slots
+SLOT_COUNT = 80  # reward slots
 
 # -----------------------------
 # STYLE (HTML/CSS) - SAME LOOK
