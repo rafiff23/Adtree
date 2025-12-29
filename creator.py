@@ -5,12 +5,13 @@ from content_qc import render as content_qc_page
 from leaderboard import render as leaderboard_page
 from leaderboard_page import render as leaderbord_page_page
 from dining import render as dining_page
+from all_industry import render as all_industry_page
 
 st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Creator List", "Content Submissions", "Content QC","Leaderboard Import", "Leaderboard Page", "Dining"],
+    ["Creator List", "Content Submissions", "Content QC","Leaderboard Import", "Leaderboard Page", "Dining", "All Industry"],
 )
 
 if page == "Creator List":
@@ -30,3 +31,6 @@ elif page == "Leaderboard Page":
 
 elif page == "Dining":
     dining_page()
+
+elif page == "All Industry":
+    all_industry_page() 
