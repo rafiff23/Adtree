@@ -10,7 +10,7 @@ st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Creator List", "Content Submissions", "Content QC","Leaderboard Import", "Leaderboard Page"],
+    ["Creator List", "Content Submissions", "Content QC","Leaderboard Import", "Leaderboard Page", "Dining"],
 )
 
 if page == "Creator List":
