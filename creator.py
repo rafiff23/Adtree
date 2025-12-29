@@ -4,6 +4,7 @@ from content_submission import render as content_submission_page
 from content_qc import render as content_qc_page
 from leaderboard import render as leaderboard_page
 from leaderboard_page import render as leaderbord_page_page
+from dining import render as dining_page
 
 st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
@@ -26,3 +27,6 @@ elif page == "Leaderboard Import":
 
 elif page == "Leaderboard Page":
     leaderbord_page_page()
+
+elif page == "Dining":
+    dining_page()
