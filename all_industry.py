@@ -287,7 +287,7 @@ def _render_slots(df_all: pd.DataFrame):
     - eligible when Status == 'Dapat Hadiah'
     Fill order follows table sort (GMV desc).
     """
-    eligible = {"Dapat Hadiah"}  # change if your data uses another exact wording
+    eligible = {"Dapat Bonus"}  # change if your data uses another exact wording
     df_eligible = df_all[df_all["Status"].isin(eligible)].copy()
     df_fill = df_eligible.head(SLOT_COUNT)
 
