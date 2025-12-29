@@ -11,7 +11,7 @@ st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Creator List", "Content Submissions", "Content QC","Leaderboard Import", "Leaderboard Page", "Dining", "All Industry"],
+    ["Creator List", "Content Submissions", "Content QC","Leaderboard Import"],
 )
 
 if page == "Creator List":
@@ -26,11 +26,11 @@ elif page == "Content QC":
 elif page == "Leaderboard Import":
     leaderboard_page()
 
-elif page == "Leaderboard Page":
-    leaderbord_page_page()
+# elif page == "Leaderboard Page":
+#     leaderbord_page_page()
 
-elif page == "Dining":
-    dining_page()
+# elif page == "Dining":
+#     dining_page()
 
-elif page == "All Industry":
-    all_industry_page() 
+# elif page == "All Industry":
+#     all_industry_page() 
