@@ -205,6 +205,7 @@ def fetch_creator_registry(tiktok_id_filter=None, start_date=None, end_date=None
             cr.uid,
             cr.phone_number,
             cr.tiktok_link,
+            cr.level,
             cr.binding_status,
             cr.onboarding_date,
             cr.month_label,
