@@ -129,18 +129,29 @@ def insert_creator_registry_row(
     onboarding_date,
     month_label,
     notes,
+    level,  # ✅ NEW
 ):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # resolve agency_name -> agency_id
+            # -------------------------------------------------
+            # Resolve agency_name -> agency_id
+            # -------------------------------------------------
             cur.execute(
-                "SELECT id FROM public.agency_map WHERE agency_name = %s LIMIT 1;",
+                """
+                SELECT id
+                FROM public.agency_map
+                WHERE agency_name = %s
+                LIMIT 1
+                """,
                 (agency_name,),
             )
             row = cur.fetchone()
-            agency_id = row[0] if row else None
+            agency_id = row["id"] if row else None
 
+            # -------------------------------------------------
+            # Insert creator
+            # -------------------------------------------------
             cur.execute(
                 """
                 INSERT INTO public.creator_registry (
@@ -155,35 +166,52 @@ def insert_creator_registry_row(
                     onboarding_date,
                     month_label,
                     notes,
+                    level,
                     created_at,
                     updated_at,
                     agency_id
                 )
                 VALUES (
-                    %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    NOW(), NOW(), %s
+                    %(tiktok_id)s,
+                    %(followers)s,
+                    %(full_name)s,
+                    %(domicile)s,
+                    %(uid)s,
+                    %(phone_number)s,
+                    %(tiktok_link)s,
+                    %(binding_status)s,
+                    %(onboarding_date)s,
+                    %(month_label)s,
+                    %(notes)s,
+                    %(level)s,
+                    NOW(),
+                    NOW(),
+                    %(agency_id)s
                 )
                 RETURNING id;
                 """,
-                (
-                    tiktok_id,
-                    followers,
-                    full_name,
-                    domicile,
-                    uid,
-                    phone_number,
-                    tiktok_link,
-                    binding_status,
-                    onboarding_date,
-                    month_label,
-                    notes,
-                    agency_id,
-                ),
+                {
+                    "tiktok_id": tiktok_id,
+                    "followers": followers,
+                    "full_name": full_name,
+                    "domicile": domicile,
+                    "uid": uid,
+                    "phone_number": phone_number,
+                    "tiktok_link": tiktok_link,
+                    "binding_status": binding_status,
+                    "onboarding_date": onboarding_date,
+                    "month_label": month_label,
+                    "notes": notes,
+                    "level": level,
+                    "agency_id": agency_id,
+                },
             )
-            new_id = cur.fetchone()[0]
+
+            new_id = cur.fetchone()["id"]
+
         conn.commit()
         return new_id
+
     finally:
         conn.close()
 

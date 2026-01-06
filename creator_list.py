@@ -42,6 +42,26 @@ def render():
     binding_options = ["(Show All)"] + sorted(df["binding_status"].dropna().unique())
     binding_filter = st.selectbox("Filter by Binding Status", binding_options)
 
+    # Filter by Onboarding Date (Range)
+    # Make sure onboarding_date is datetime-like
+    df["onboarding_date"] = pd.to_datetime(df["onboarding_date"], errors="coerce").dt.date
+
+    valid_dates = df["onboarding_date"].dropna()
+    if not valid_dates.empty:
+        min_date = valid_dates.min()
+        max_date = valid_dates.max()
+    else:
+        min_date = dt.date.today()
+        max_date = dt.date.today()
+
+    onboarding_range = st.date_input(
+        "Filter by Onboarding Date (Range)",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+    )
+
+
     filtered_df = df.copy()
 
     if tiktok_id_filter != "(Show All)":
@@ -49,6 +69,14 @@ def render():
 
     if binding_filter != "(Show All)":
         filtered_df = filtered_df[filtered_df["binding_status"] == binding_filter]
+
+        # Apply Onboarding Date range filter
+    if isinstance(onboarding_range, tuple) and len(onboarding_range) == 2:
+        start_date, end_date = onboarding_range
+        filtered_df = filtered_df[
+            (pd.to_datetime(filtered_df["onboarding_date"], errors="coerce").dt.date >= start_date) &
+            (pd.to_datetime(filtered_df["onboarding_date"], errors="coerce").dt.date <= end_date)
+        ]
 
     # ---------- VIEW-ONLY TABLE ----------
     st.subheader("Creator Data (View Only)")
