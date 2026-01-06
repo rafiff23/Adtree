@@ -3,9 +3,6 @@ from creator_list import render as creator_list_page
 from content_submission import render as content_submission_page
 from content_qc import render as content_qc_page
 from leaderboard import render as leaderboard_page
-from leaderboard_page import render as leaderbord_page_page
-from dining import render as dining_page
-from all_industry import render as all_industry_page
 
 st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
@@ -25,12 +22,3 @@ elif page == "Content QC":
 
 elif page == "Leaderboard Import":
     leaderboard_page()
-
-# elif page == "Leaderboard Page":
-#     leaderbord_page_page()
-
-# elif page == "Dining":
-#     dining_page()
-
-# elif page == "All Industry":
-#     all_industry_page() 
