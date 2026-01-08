@@ -208,7 +208,18 @@ def render():
             check_change("full_name", full_name_new)
             check_change("domicile", domicile_new)
             updated_uid = uid_clean if uid_clean else None
-            check_change("uid", uid_new)
+            # check_change("uid", uid_new)
+            def norm(v):
+                # treat empty strings as None
+                if v is None:
+                    return None
+                if isinstance(v, str) and v.strip() == "":
+                    return None
+                return v
+
+            # compare normalized values so None vs "" doesn't count as a change
+            if norm(row["uid"]) != updated_uid:
+                updated_fields["uid"] = updated_uid
             check_change("phone_number", phone_final)
             check_change("tiktok_link", tiktok_link_new)
             check_change("binding_status", binding_status_new)
