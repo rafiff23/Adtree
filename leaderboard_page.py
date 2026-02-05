@@ -62,17 +62,41 @@ def load_leaderboard(campaign_id, start_date, end_date):
     try:
         df = pd.read_sql(
             f"""
+            WITH base AS (
+                SELECT
+                    tiktok_id,
+                    COALESCE(NULLIF(full_name, ''), tiktok_id) AS full_name,
+                    post_link
+                FROM {TABLE_SUB}
+                WHERE campaign_id = %s
+                  AND submitted_at::date BETWEEN %s AND %s
+                  AND tiktok_id IS NOT NULL
+                  AND tiktok_id <> ''
+            ),
+            agg AS (
+                SELECT
+                    tiktok_id,
+                    COUNT(post_link) AS total_post
+                FROM base
+                GROUP BY tiktok_id
+            ),
+            ranked AS (
+                SELECT
+                    a.tiktok_id,
+                    a.total_post,
+                    RANK() OVER (ORDER BY a.total_post DESC) AS rank
+                FROM agg a
+            )
             SELECT
-                tiktok_id,
-                COALESCE(NULLIF(full_name, ''), tiktok_id) AS full_name,
-                post_link,
-                COUNT(post_link) OVER (PARTITION BY tiktok_id) AS total_post
-            FROM {TABLE_SUB}
-            WHERE campaign_id = %s
-              AND submitted_at::date BETWEEN %s AND %s
-              AND tiktok_id IS NOT NULL
-              AND tiktok_id <> ''
-            ORDER BY total_post DESC, tiktok_id
+                r.rank,
+                b.full_name,
+                b.tiktok_id,
+                b.post_link,
+                r.total_post
+            FROM base b
+            JOIN ranked r
+              ON b.tiktok_id = r.tiktok_id
+            ORDER BY r.rank, b.tiktok_id;
             """,
             conn,
             params=[campaign_id, start_date, end_date],
@@ -81,6 +105,7 @@ def load_leaderboard(campaign_id, start_date, end_date):
         conn.close()
 
     return df
+
 
 # -----------------------------
 # UI
