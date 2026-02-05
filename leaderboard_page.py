@@ -113,7 +113,6 @@ def load_leaderboard(campaign_id, start_date, end_date):
 def render():
     st.title("Newly Creator Campaign Leaderboard")
 
-    # Period selector
     period = st.radio(
         "Select Period",
         ["Week 3 (15–23 Jan)", "Week 4 (24–31 Jan)"],
@@ -139,16 +138,7 @@ def render():
         st.warning("No submissions found for this period.")
         return
 
-    # Optional: rank creators by total_post
-    df["rank"] = (
-        df[["tiktok_id", "total_post"]]
-        .drop_duplicates()
-        .sort_values("total_post", ascending=False)
-        .reset_index(drop=True)
-        .index + 1
-    )
-
-    # Final table
+    # ✅ rank already exists from SQL — DO NOT recalc
     df_table = df[
         [
             "rank",
@@ -160,7 +150,3 @@ def render():
     ]
 
     st.dataframe(df_table, use_container_width=True)
-
-# -----------------------------
-# RUN
-# -----------------------------
