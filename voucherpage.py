@@ -55,11 +55,14 @@ def clean_text(v):
 
 
 def pick_col(df, name):
-    col_map = {c.strip().lower(): c for c in df.columns}
-    key = name.strip().lower()
-    if key not in col_map:
-        raise ValueError(f"Missing required column: {name}")
-    return col_map[key]
+    name = name.strip().lower()
+
+    for col in df.columns:
+        col_clean = re.sub(r"\s+", " ", col.lower()).strip()
+        if name in col_clean:
+            return col
+
+    raise ValueError(f"Missing required column: {name}")
 
 
 # ======================================================
@@ -113,19 +116,10 @@ def render():
     if uploaded is None:
         st.info("Upload a CSV file to begin.")
         st.stop()
-
+    
     df = pd.read_csv(uploaded)
-
-    # Validate columns
-    missing = [
-        c for c in REQUIRED_COLS
-        if c.lower() not in [x.strip().lower() for x in df.columns]
-    ]
-
-    if missing:
-        st.error(f"Missing required columns: {missing}")
-        st.write("Detected columns:", list(df.columns))
-        st.stop()
+    df.columns = df.columns.str.replace('\n', ' ', regex=False)
+    df.columns = df.columns.str.strip()
 
     st.subheader("Raw Preview")
     st.dataframe(df.head(20), use_container_width=True)
