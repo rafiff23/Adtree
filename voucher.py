@@ -104,79 +104,80 @@ def ensure_table(cur):
 # UI
 # ======================================================
 
-st.set_page_config(page_title="Voucher Import", page_icon="🎟️")
-st.title("🎟️ Voucher Campaign Import")
+def render():
+    st.set_page_config(page_title="Voucher Import", page_icon="🎟️")
+    st.title("🎟️ Voucher Campaign Import")
 
-uploaded = st.file_uploader("Upload Voucher CSV", type=["csv"])
+    uploaded = st.file_uploader("Upload Voucher CSV", type=["csv"])
 
-if uploaded is None:
-    st.info("Upload a CSV file to begin.")
-    st.stop()
+    if uploaded is None:
+        st.info("Upload a CSV file to begin.")
+        st.stop()
 
-df = pd.read_csv(uploaded)
+    df = pd.read_csv(uploaded)
 
-# Validate columns
-missing = [
-    c for c in REQUIRED_COLS
-    if c.lower() not in [x.strip().lower() for x in df.columns]
-]
+    # Validate columns
+    missing = [
+        c for c in REQUIRED_COLS
+        if c.lower() not in [x.strip().lower() for x in df.columns]
+    ]
 
-if missing:
-    st.error(f"Missing required columns: {missing}")
-    st.write("Detected columns:", list(df.columns))
-    st.stop()
+    if missing:
+        st.error(f"Missing required columns: {missing}")
+        st.write("Detected columns:", list(df.columns))
+        st.stop()
 
-st.subheader("Raw Preview")
-st.dataframe(df.head(20), use_container_width=True)
+    st.subheader("Raw Preview")
+    st.dataframe(df.head(20), use_container_width=True)
 
-# Normalize
-try:
-    df_norm = normalize(df)
-except Exception as e:
-    st.error(f"Normalization failed: {e}")
-    st.stop()
-
-st.subheader("Normalized Preview")
-st.dataframe(df_norm.head(20), use_container_width=True)
-st.caption(f"Rows to insert: {len(df_norm):,}")
-
-clear_first = st.checkbox("Clear table first (TRUNCATE)", value=True)
-
-if st.button("🚀 Import to Database", type="primary"):
-
-    conn = get_connection()
-
+    # Normalize
     try:
-        with conn:
-            with conn.cursor() as cur:
-
-                ensure_table(cur)
-
-                if clear_first:
-                    cur.execute(f"TRUNCATE TABLE {full_table()};")
-
-                rows = [
-                    tuple(None if pd.isna(x) else x for x in r)
-                    for r in df_norm.to_numpy()
-                ]
-
-                execute_values(
-                    cur,
-                    f"""
-                    INSERT INTO {full_table()}
-                    (username, nomor_telpon, lokasi_outlet,
-                     code_voucher_oden, code_voucher_tea_series,
-                     code_voucher_matcha_series)
-                    VALUES %s
-                    """,
-                    rows,
-                    page_size=5000
-                )
-
-        st.success(f"Successfully inserted {len(df_norm):,} rows.")
-
+        df_norm = normalize(df)
     except Exception as e:
-        st.error(f"Import failed: {e}")
+        st.error(f"Normalization failed: {e}")
+        st.stop()
 
-    finally:
-        conn.close()
+    st.subheader("Normalized Preview")
+    st.dataframe(df_norm.head(20), use_container_width=True)
+    st.caption(f"Rows to insert: {len(df_norm):,}")
+
+    clear_first = st.checkbox("Clear table first (TRUNCATE)", value=True)
+
+    if st.button("🚀 Import to Database", type="primary"):
+
+        conn = get_connection()
+
+        try:
+            with conn:
+                with conn.cursor() as cur:
+
+                    ensure_table(cur)
+
+                    if clear_first:
+                        cur.execute(f"TRUNCATE TABLE {full_table()};")
+
+                    rows = [
+                        tuple(None if pd.isna(x) else x for x in r)
+                        for r in df_norm.to_numpy()
+                    ]
+
+                    execute_values(
+                        cur,
+                        f"""
+                        INSERT INTO {full_table()}
+                        (username, nomor_telpon, lokasi_outlet,
+                        code_voucher_oden, code_voucher_tea_series,
+                        code_voucher_matcha_series)
+                        VALUES %s
+                        """,
+                        rows,
+                        page_size=5000
+                    )
+
+            st.success(f"Successfully inserted {len(df_norm):,} rows.")
+
+        except Exception as e:
+            st.error(f"Import failed: {e}")
+
+        finally:
+            conn.close()
