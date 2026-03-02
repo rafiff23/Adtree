@@ -4,7 +4,7 @@ from content_submission import render as content_submission_page
 from content_qc import render as content_qc_page
 from leaderboard import render as leaderboard_page
 from leaderboard_page import render as leaderboard
-# from voucher import render as voucher_page
+from voucherpage import render as voucher_page
 
 st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
@@ -28,5 +28,5 @@ elif page == "Leaderboard Import":
 elif page == "Leaderboard January":
     leaderboard()
 
-# elif page == "Voucher Import":
-    # voucher_page()
+elif page == "Voucher Import":
+    voucher_page()
