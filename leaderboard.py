@@ -10,7 +10,7 @@ from psycopg2.extras import execute_values
 DB_USER = "postgres"
 DB_PASSWORD = "4dtr33"
 DB_HOST = "localhost"
-DB_PORT = "5433"
+DB_PORT = "5432"
 DB_NAME = "adtree"
 
 def get_connection():
