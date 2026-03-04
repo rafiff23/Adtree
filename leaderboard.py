@@ -64,7 +64,7 @@ FINAL_COLUMNS = [
 # ======================================================
 
 def render():
-    st.title("📊 TikTok Go Video Transaction Importer V2")
+    st.title("📊 TikTok Go Video Transaction Importer V22")
 
     uploaded_file = st.file_uploader("Upload XLSX File", type=["xlsx"])
 
