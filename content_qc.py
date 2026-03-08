@@ -1,12 +1,7 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
 from psycopg2.extras import execute_values
 from db import get_connection
-
-# ---------------------------------------
-# CONFIG
-# ---------------------------------------
 
 SCHEMA = "leaderboard"
 TABLE = "tiktok_go_video_transactions"
@@ -20,44 +15,39 @@ EXPORT_COLS = [
     "status_qc"
 ]
 
-# ---------------------------------------
-# PAGE TITLE
-# ---------------------------------------
+@st.cache_data
+def load_data():
+    conn = get_connection()
 
-st.title("📥 TikTok GO QC Tool")
+    query = f"""
+        SELECT {", ".join(EXPORT_COLS)}
+        FROM {SCHEMA}.{TABLE}
+        ORDER BY item_create_date DESC
+    """
 
-st.write(
-"""
-Workflow:
+    df = pd.read_sql(query, conn)
+    conn.close()
 
-1. Download the dataset
-2. Perform QC in Google Sheets
-3. Update the **status_qc** column
-4. Export as CSV
-5. Upload back here to update the database
-"""
-)
+    return df
 
-# ---------------------------------------
-# DOWNLOAD DATA
-# ---------------------------------------
 
 def render():
+
+    st.title("📥 TikTok GO QC Tool")
+
+    st.write(
+    """
+    Workflow:
+
+    1. Download the dataset
+    2. Perform QC in Google Sheets
+    3. Update the **status_qc** column
+    4. Export as CSV
+    5. Upload back here to update the database
+    """
+    )
+
     st.header("1️⃣ Download Data From Database")
-
-
-    @st.cache_data
-    def load_data():
-        conn = get_connection()
-        query = f"""
-            SELECT {", ".join(EXPORT_COLS)}
-            FROM {SCHEMA}.{TABLE}
-            ORDER BY item_create_date DESC
-        """
-        df = pd.read_sql(query, conn)
-        conn.close()
-        return df
-
 
     df = load_data()
 
@@ -68,15 +58,11 @@ def render():
     csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
-        label="⬇️ Download CSV",
-        data=csv,
-        file_name="tiktok_go_qc_download.csv",
-        mime="text/csv"
+        "⬇️ Download CSV",
+        csv,
+        "tiktok_go_qc_download.csv",
+        "text/csv"
     )
-
-    # ---------------------------------------
-    # IMPORT CSV
-    # ---------------------------------------
 
     st.header("2️⃣ Upload QC Result")
 
@@ -95,7 +81,7 @@ def render():
 
         if missing:
             st.error(f"Missing required columns: {missing}")
-            st.stop()
+            return
 
         st.success(f"File loaded with {len(df_upload)} rows")
 
@@ -118,11 +104,7 @@ def render():
                 .itertuples(index=False, name=None)
             )
 
-            execute_values(
-                cur,
-                update_query,
-                data
-            )
+            execute_values(cur, update_query, data)
 
             conn.commit()
             cur.close()
