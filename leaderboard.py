@@ -2,9 +2,10 @@ import pandas as pd
 import streamlit as st
 import psycopg2
 from psycopg2.extras import execute_values
+from datetime import date
 
 # ======================================================
-# DATABASE CONFIG (YOUR CONFIG)
+# DATABASE CONFIG
 # ======================================================
 
 DB_USER = "postgres"
@@ -64,26 +65,50 @@ FINAL_COLUMNS = [
 # ======================================================
 
 def render():
-    st.title("📊 TikTok Go Video Transaction Importer V22")
+
+    st.title("📊 TikTok Go Video Transaction Importer V23")
+
+    # --------------------------------------------------
+    # IMPORT SETTINGS
+    # --------------------------------------------------
+
+    st.subheader("Import Settings")
+
+    import_month = st.selectbox(
+        "Select Month",
+        list(range(1,13))
+    )
+
+    import_week = st.selectbox(
+        "Select Week",
+        [1,2,3,4,5]
+    )
+
+    cutoff_date = st.date_input(
+        "Cutoff Date (Will overwrite item_create_date)",
+        value=date.today()
+    )
 
     uploaded_file = st.file_uploader("Upload XLSX File", type=["xlsx"])
 
     if uploaded_file:
 
         try:
+
             xls = pd.ExcelFile(uploaded_file)
+
             all_data = []
 
             for sheet_name, industry_name in SHEETS.items():
 
                 if sheet_name not in xls.sheet_names:
-                    st.error(f"Sheet '{sheet_name}' not found in uploaded file.")
+                    st.error(f"Sheet '{sheet_name}' not found.")
                     st.stop()
 
                 df = pd.read_excel(xls, sheet_name=sheet_name)
 
                 # ======================================================
-                # STANDARDIZE COLUMN NAMES
+                # COLUMN STANDARDIZATION
                 # ======================================================
 
                 if industry_name in ["accommodation", "attraction"]:
@@ -116,13 +141,13 @@ def render():
                     })
 
                 # ======================================================
-                # ADD INDUSTRY COLUMN
+                # INDUSTRY
                 # ======================================================
 
                 df["industry_source"] = industry_name
 
                 # ======================================================
-                # DATA CLEANING
+                # CLEAN NUMERIC
                 # ======================================================
 
                 numeric_cols = [
@@ -141,14 +166,8 @@ def render():
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-                if "item_create_date" in df.columns:
-                    df["item_create_date"] = pd.to_datetime(
-                        df["item_create_date"],
-                        errors="coerce"
-                    )
-
                 # ======================================================
-                # ENSURE ALL REQUIRED COLUMNS EXIST
+                # ENSURE REQUIRED COLUMNS
                 # ======================================================
 
                 for col in FINAL_COLUMNS:
@@ -160,13 +179,12 @@ def render():
                 all_data.append(df)
 
             # ======================================================
-            # MERGE ALL SHEETS
+            # MERGE SHEETS
             # ======================================================
 
             final_df = pd.concat(all_data, ignore_index=True)
 
-            st.success(f"Total rows ready for insert: {len(final_df)}")
-
+            st.success(f"Rows ready for insert: {len(final_df)}")
             st.dataframe(final_df.head())
 
             # ======================================================
@@ -177,6 +195,22 @@ def render():
 
                 conn = get_connection()
                 cursor = conn.cursor()
+
+                # ---------------------------------------------
+                # DELETE EXISTING DATA FOR SAME WEEK
+                # ---------------------------------------------
+
+                delete_query = f"""
+                DELETE FROM {SCHEMA_NAME}.{TABLE_NAME}
+                WHERE DATE_TRUNC('month', item_create_date) = DATE_TRUNC('month', %s::timestamp)
+                AND EXTRACT(week FROM item_create_date) = %s
+                """
+
+                cursor.execute(delete_query, (cutoff_date, import_week))
+
+                # ---------------------------------------------
+                # INSERT
+                # ---------------------------------------------
 
                 insert_query = f"""
                     INSERT INTO {SCHEMA_NAME}.{TABLE_NAME} (
@@ -191,11 +225,25 @@ def render():
 
                 execute_values(cursor, insert_query, values)
 
+                # ---------------------------------------------
+                # UPDATE CUTOFF DATE
+                # ---------------------------------------------
+
+                update_query = f"""
+                UPDATE {SCHEMA_NAME}.{TABLE_NAME}
+                SET item_create_date = %s
+                WHERE item_create_date IS NULL
+                """
+
+                cursor.execute(update_query, (cutoff_date,))
+
                 conn.commit()
+
                 cursor.close()
                 conn.close()
 
                 st.success("✅ Import completed successfully.")
 
         except Exception as e:
+
             st.error(f"Error occurred: {str(e)}")
