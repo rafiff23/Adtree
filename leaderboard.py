@@ -28,7 +28,7 @@ def get_connection():
 # ======================================================
 
 SCHEMA_NAME = "leaderboard"
-TABLE_NAME = "tiktok_go_video_transactions"
+TABLE_NAME  = "tiktok_go_video_transactions"
 
 SHEETS = {
     "Accommodation  video transactio": "accommodation",
@@ -36,15 +36,6 @@ SHEETS = {
     "FnB  video transaction performa": "fnb"
 }
 
-# Columns that identify a unique row (GROUP BY key)
-GROUP_KEY_COLS = [
-    "item_id",
-    "industry_source",
-    "uniq_id",
-    "author_id",
-]
-
-# Numeric columns → take MAX when deduplicating
 NUMERIC_COLS = [
     "author_actual_sales_power",
     "poi_vv",
@@ -57,7 +48,6 @@ NUMERIC_COLS = [
     "poi_item_publish_cnt_db",
 ]
 
-# Text/metadata columns → take first value
 META_COLS = [
     "item_url",
     "item_create_date",
@@ -67,6 +57,8 @@ META_COLS = [
     "poi_l1_asci_name",
     "poi_l2_asci_name",
     "close_loop_merchant_name",
+    "author_id",
+    "uniq_id",
 ]
 
 FINAL_COLUMNS = [
@@ -106,68 +98,49 @@ def generate_month_options():
     months = []
     for i in range(-5, 3):
         month = today.month + i
-        year = today.year
-        while month < 1:
-            month += 12
-            year -= 1
-        while month > 12:
-            month -= 12
-            year += 1
+        year  = today.year
+        while month < 1:  month += 12; year -= 1
+        while month > 12: month -= 12; year += 1
         months.append(f"{year}-{month:02d}")
     return months
-
 
 def month_str_to_date(month_str):
     year, month = map(int, month_str.split("-"))
     return date(year, month, 1)
 
-
 def fetch_previous_cumulative(conn, report_month_date, report_week):
-    """
-    Fetch previous week's fulfill_amount_usd keyed by (uniq_id, industry_source).
-    Week 1 → returns empty dict (baseline = 0).
-    """
     if report_week == 1:
         return {}
-
-    prev_week = report_week - 1
     sql = f"""
         SELECT uniq_id, industry_source, fulfill_amount_usd
         FROM {SCHEMA_NAME}.{TABLE_NAME}
-        WHERE report_month = %s
-        AND report_week = %s
+        WHERE report_month = %s AND report_week = %s
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (report_month_date, prev_week))
+        cur.execute(sql, (report_month_date, report_week - 1))
         rows = cur.fetchall()
-
     return {(r[0], r[1]): (r[2] or 0) for r in rows}
 
 
-def deduplicate_df(df):
+def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Deduplicate rows with same GROUP_KEY_COLS.
-    Numeric cols → MAX, meta cols → first value.
+    Per sheet, duplicates share the same item_id + industry_source.
+    Strategy: sort by fulfill_amount_usd DESC, keep first (= MAX row).
+    This keeps ALL columns of the best row, no groupby needed.
     """
-    agg_dict = {}
-
-    for col in NUMERIC_COLS:
-        if col in df.columns:
-            agg_dict[col] = "max"
-
-    for col in META_COLS:
-        if col in df.columns:
-            agg_dict[col] = "first"
-
-    valid_keys = [k for k in GROUP_KEY_COLS if k in df.columns]
-    deduped = df.groupby(valid_keys, as_index=False, dropna=False).agg(agg_dict)
-
     before = len(df)
-    after = len(deduped)
-    if before != after:
-        st.warning(f"⚠️ Deduplicated {before - after} duplicate rows (kept MAX values).")
 
-    return deduped
+    df = (
+        df.sort_values("fulfill_amount_usd", ascending=False, na_position="last")
+        .drop_duplicates(subset=["item_id", "industry_source"], keep="first")
+        .reset_index(drop=True)
+    )
+
+    after = len(df)
+    if before != after:
+        st.warning(f"⚠️ Removed **{before - after}** duplicate rows (kept row with highest fulfill_amount_usd).")
+
+    return df
 
 
 def load_and_transform_xlsx(uploaded_file):
@@ -179,56 +152,52 @@ def load_and_transform_xlsx(uploaded_file):
             st.error(f"❌ Sheet '{sheet_name}' not found in uploaded file.")
             st.stop()
 
-        df = pd.read_excel(xls, sheet_name=sheet_name)
+        # Read item_id as string to avoid float conversion
+        df = pd.read_excel(xls, sheet_name=sheet_name, dtype={"(primary key)item_id": str})
 
-        # ---- Column Standardization ----
+        # ---- Column rename ----
         if industry_name in ["accommodation", "attraction"]:
             df = df.rename(columns={
-                "(primary key)item_id": "item_id",
-                "item URL": "item_url",
-                "alliance_open_loop_pay_amount_dollar": "pay_amount_usd",
-                "alliance_open_loop_fulfill_amount_dollar": "fulfill_amount_usd",
-                "alliance_open_loop_pay_order_cnt": "order_count",
-                "AOV": "aov",
-                "CTR": "ctr",
-                "CVR": "cvr"
+                "(primary key)item_id":                     "item_id",
+                "item URL":                                  "item_url",
+                "alliance_open_loop_pay_amount_dollar":      "pay_amount_usd",
+                "alliance_open_loop_fulfill_amount_dollar":  "fulfill_amount_usd",
+                "alliance_open_loop_pay_order_cnt":          "order_count",
+                "AOV": "aov", "CTR": "ctr", "CVR": "cvr"
             })
             df["close_loop_merchant_name"] = None
 
         elif industry_name == "fnb":
             df = df.rename(columns={
-                "(primary key)item_id": "item_id",
-                "item URL": "item_url",
-                "alliance_close_loop_pay_pay_amount_dollar": "pay_amount_usd",
+                "(primary key)item_id":                          "item_id",
+                "item URL":                                       "item_url",
+                "alliance_close_loop_pay_pay_amount_dollar":     "pay_amount_usd",
                 "alliance_close_loop_fulfill_pay_amount_dollar": "fulfill_amount_usd",
-                "alliance_close_loop_pay_shop_order_cnt": "order_count",
-                "Pay AOV": "aov",
-                "Close Loop CVR - Supply POI Content Source": "cvr",
-                "CTR": "ctr",
-                "close_loop_has_service_merchant_names": "close_loop_merchant_name"
+                "alliance_close_loop_pay_shop_order_cnt":        "order_count",
+                "Pay AOV":                                        "aov",
+                "Close Loop CVR - Supply POI Content Source":     "cvr",
+                "CTR":                                            "ctr",
+                "close_loop_has_service_merchant_names":          "close_loop_merchant_name"
             })
 
         df["industry_source"] = industry_name
 
-        # ---- Clean Numerics ----
+        # ---- Clean numerics ----
         for col in NUMERIC_COLS:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # ---- Ensure all base columns exist ----
-        base_cols = GROUP_KEY_COLS + NUMERIC_COLS + META_COLS
-        for col in base_cols:
+        # ---- Ensure all columns exist ----
+        for col in META_COLS + ["item_id"]:
             if col not in df.columns:
                 df[col] = None
 
+        # ---- Deduplicate within this sheet ----
+        df = deduplicate_df(df)
+
         all_data.append(df)
 
-    merged = pd.concat(all_data, ignore_index=True)
-
-    # ---- Deduplicate within the XLSX ----
-    merged = deduplicate_df(merged)
-
-    return merged
+    return pd.concat(all_data, ignore_index=True)
 
 
 # ======================================================
@@ -236,13 +205,9 @@ def load_and_transform_xlsx(uploaded_file):
 # ======================================================
 
 def render():
-    st.title("📊 TikTok Go Video Transaction Importer")
+    st.title("📊 TikTok Go Video Transaction Importer V2")
 
-    # --------------------------------------------------
-    # IMPORT SETTINGS
-    # --------------------------------------------------
     st.subheader("Import Settings")
-
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -259,51 +224,48 @@ def render():
 
     report_month_date = month_str_to_date(selected_month)
 
-    st.info(
-        f"📌 Importing: **{selected_month}** · **Week {selected_week}** · "
-        f"Cutoff **{cutoff_date}**"
-    )
+    st.info(f"📌 Importing: **{selected_month}** · **Week {selected_week}** · Cutoff **{cutoff_date}**")
 
-    # --------------------------------------------------
-    # FILE UPLOAD
-    # --------------------------------------------------
     uploaded_file = st.file_uploader("Upload XLSX File", type=["xlsx"])
-
     if not uploaded_file:
         return
 
     try:
-        # ---- Load, Transform & Deduplicate ----
         final_df = load_and_transform_xlsx(uploaded_file)
 
-        # ---- Attach import metadata ----
-        final_df["report_month"] = report_month_date
-        final_df["report_week"] = selected_week
-        final_df["cutoff_date"] = cutoff_date
-        final_df["item_create_date"] = cutoff_date
+        # ---- Attach metadata ----
+        final_df["report_month"]             = report_month_date
+        final_df["report_week"]              = selected_week
+        final_df["cutoff_date"]              = cutoff_date
+        final_df["item_create_date"]         = cutoff_date
+        final_df["fulfill_amount_usd_weekly"] = None  # calculated before insert
 
-        # ---- Preview ----
+        # Ensure all final columns exist
+        for col in FINAL_COLUMNS:
+            if col not in final_df.columns:
+                final_df[col] = None
+
         st.success(f"✅ Rows ready for import: **{len(final_df)}**")
 
-        with st.expander("🔍 Preview Data (first 20 rows)", expanded=False):
-            preview_cols = [
-                "item_id", "industry_source", "uniq_id",
-                "fulfill_amount_usd", "pay_amount_usd", "order_count"
-            ]
+        with st.expander("🔍 Preview (first 20 rows)", expanded=False):
+            preview_cols = ["item_id", "industry_source", "uniq_id", "fulfill_amount_usd", "pay_amount_usd", "order_count"]
             st.dataframe(final_df[preview_cols].head(20), use_container_width=True)
 
-        # --------------------------------------------------
+        # ---- Safety check: show remaining dupes if any ----
+        dupes = final_df.duplicated(subset=["item_id", "industry_source"], keep=False)
+        if dupes.any():
+            st.error(f"❌ {dupes.sum()} duplicate (item_id + industry_source) rows still exist. Cannot import.")
+            st.dataframe(final_df[dupes][["item_id", "industry_source", "uniq_id", "fulfill_amount_usd"]].head(20))
+            return
+
+        # ======================================================
         # IMPORT BUTTON
-        # --------------------------------------------------
+        # ======================================================
         if st.button("💾 Import to Database", type="primary"):
-
             conn = get_connection()
-
             try:
-                # ---- Step 1: Fetch previous week cumulative ----
-                prev_cumulative = fetch_previous_cumulative(
-                    conn, report_month_date, selected_week
-                )
+                # Step 1: Previous week cumulative
+                prev_cumulative = fetch_previous_cumulative(conn, report_month_date, selected_week)
 
                 if selected_week == 1:
                     st.info("ℹ️ Week 1 — weekly value = cumulative (no previous baseline).")
@@ -312,47 +274,37 @@ def render():
                         1 for _, row in final_df.iterrows()
                         if (row["uniq_id"], row["industry_source"]) in prev_cumulative
                     )
-                    st.info(
-                        f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. "
-                        f"Matched **{matched}/{len(final_df)}** rows with previous week."
-                    )
+                    st.info(f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. Matched **{matched}/{len(final_df)}** rows.")
 
-                # ---- Step 2: Calculate weekly delta ----
+                # Step 2: Calculate weekly delta
                 def calc_weekly(row):
-                    key = (row["uniq_id"], row["industry_source"])
-                    prev = prev_cumulative.get(key, 0)
+                    key     = (row["uniq_id"], row["industry_source"])
+                    prev    = prev_cumulative.get(key, 0)
                     current = row["fulfill_amount_usd"] if pd.notna(row["fulfill_amount_usd"]) else 0
                     return max(current - prev, 0)
 
                 final_df["fulfill_amount_usd_weekly"] = final_df.apply(calc_weekly, axis=1)
 
-                # ---- Step 3: Delete existing rows for same month + week ----
+                # Step 3: Delete existing rows for same month + week
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_NAME} "
-                        f"WHERE report_month = %s AND report_week = %s",
+                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_NAME} WHERE report_month = %s AND report_week = %s",
                         (report_month_date, selected_week)
                     )
                     deleted_count = cur.rowcount
 
                 if deleted_count > 0:
-                    st.warning(
-                        f"🗑️ Deleted **{deleted_count}** existing rows for "
-                        f"{selected_month} Week {selected_week}."
-                    )
+                    st.warning(f"🗑️ Deleted **{deleted_count}** existing rows for {selected_month} Week {selected_week}.")
 
-                # ---- Step 4: Insert ----
+                # Step 4: Insert
                 insert_query = f"""
-                    INSERT INTO {SCHEMA_NAME}.{TABLE_NAME} (
-                        {", ".join(FINAL_COLUMNS)}
-                    )
+                    INSERT INTO {SCHEMA_NAME}.{TABLE_NAME} ({", ".join(FINAL_COLUMNS)})
                     VALUES %s
                 """
-
                 values = [
                     tuple(
-                        row[col] if pd.notna(row[col]) else None
-                        for col in FINAL_COLUMNS
+                        None if (val is None or (isinstance(val, float) and pd.isna(val))) else val
+                        for val in (row[col] for col in FINAL_COLUMNS)
                     )
                     for _, row in final_df.iterrows()
                 ]
@@ -363,13 +315,11 @@ def render():
                 conn.commit()
 
                 st.success(
-                    f"✅ Import completed! "
-                    f"**{len(final_df)}** rows inserted for "
-                    f"**{selected_month}** · Week **{selected_week}** · "
-                    f"Cutoff **{cutoff_date}**"
+                    f"✅ **{len(final_df)}** rows inserted for "
+                    f"**{selected_month}** · Week **{selected_week}** · Cutoff **{cutoff_date}**"
                 )
 
-                # ---- Summary stats ----
+                # Summary
                 st.subheader("📊 Import Summary")
                 summary = final_df.groupby("industry_source").agg(
                     rows=("uniq_id", "count"),
@@ -381,7 +331,6 @@ def render():
             except Exception as e:
                 conn.rollback()
                 st.error(f"❌ Import failed, rolled back. Error: {str(e)}")
-
             finally:
                 conn.close()
 
