@@ -16,21 +16,23 @@ EXPORT_COLS = [
     "status_qc"
 ]
 
-@st.cache_data
-def load_data():
-    """Fetches the QC dataset from the database."""
+def fetch_content_submissions():
     conn = get_connection()
-    
-    # Joining columns for the SELECT statement
-    query = f"""
+    sql = f"""
         SELECT {", ".join(EXPORT_COLS)}
         FROM {SCHEMA}.{TABLE}
         ORDER BY item_create_date DESC
     """
-
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+                # ✅ Fix: use cursor.description to extract real column names
+                columns = [desc[0] for desc in cur.description]
+        return pd.DataFrame(rows, columns=columns)  # ✅ return DataFrame directly
+    finally:
+        conn.close()
 
 def render():
     """Main UI function called by creator.py"""
@@ -51,7 +53,7 @@ def render():
     st.header("1️⃣ Download Data From Database")
     
     try:
-        df = load_data()
+        df = fetch_content_submissions() # Fetch data from content_submissions view
         st.write(f"Total rows available: **{len(df):,}**")
         st.dataframe(df.head(20))
 
@@ -66,7 +68,7 @@ def render():
         st.error(f"Error loading data: {e}")
 
     # --- Section 2: Upload ---
-    st.header("2️⃣ Upload QC Result")
+    st.header("2️⃣ Upload QC Result2")
 
     uploaded_file = st.file_uploader(
         "Upload CSV with updated status_qc",
@@ -74,9 +76,12 @@ def render():
     )
 
     if uploaded_file:
-        df_upload = pd.read_csv(uploaded_file)
-        
-        # Validation
+
+        df_upload = pd.read_csv(uploaded_file, dtype=str)
+
+        df_upload["id"] = df_upload["id"].str.strip()
+        df_upload["status_qc"] = df_upload["status_qc"].replace("", None)
+
         required_cols = ["id", "status_qc"]
         missing = [c for c in required_cols if c not in df_upload.columns]
 
@@ -84,37 +89,45 @@ def render():
             st.error(f"Missing required columns: {missing}")
             return
 
+        # keep only numeric ids
+        df_upload = df_upload[df_upload["id"].str.match(r"^\d+$")]
+
         st.success(f"File loaded successfully with {len(df_upload)} rows.")
         st.dataframe(df_upload.head())
 
         if st.button("🚀 Update Database"):
-            try:
-                conn = get_connection()
-                cur = conn.cursor()
 
-                # Bulk update using PostgreSQL VALUES syntax
-                update_query = f"""
-                UPDATE {SCHEMA}.{TABLE} t
-                SET status_qc = data.status_qc
-                FROM (VALUES %s) AS data(id, status_qc)
-                WHERE t.id = data.id
-                """
+            conn = get_connection()
+            cur = conn.cursor()
 
-                # Prepare data tuple for execute_values
-                data_to_update = list(
-                    df_upload[["id", "status_qc"]]
-                    .itertuples(index=False, name=None)
-                )
+            update_query = f"""
+            UPDATE {SCHEMA}.{TABLE} t
+            SET status_qc = data.status_qc
+            FROM (VALUES %s) AS data(id, status_qc)
+            WHERE t.id = data.id
+            """
 
-                execute_values(cur, update_query, data_to_update)
+            data_to_update = [
+                (int(row.id), row.status_qc)
+                for row in df_upload.itertuples(index=False)
+            ]
+            bad_ids = []
 
-                conn.commit()
-                cur.close()
-                conn.close()
+            for row in df_upload["id"]:
+                try:
+                    val = int(row)
+                    if val > 9223372036854775807:
+                        bad_ids.append(row)
+                except:
+                    bad_ids.append(row)
 
-                st.success("✅ Database updated successfully!")
-                # Clear cache so the table refreshes on next load
-                st.cache_data.clear()
-                
-            except Exception as e:
-                st.error(f"Database error: {e}")
+            if bad_ids:
+                st.error(f"Invalid IDs detected: {bad_ids[:10]}")
+                st.stop()
+            execute_values(cur, update_query, data_to_update)
+
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            st.success("✅ Database updated successfully!")

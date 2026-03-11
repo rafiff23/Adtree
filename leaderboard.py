@@ -2,7 +2,8 @@ import pandas as pd
 import streamlit as st
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import date
+from datetime import date, datetime
+import calendar
 
 # ======================================================
 # DATABASE CONFIG
@@ -57,193 +58,287 @@ FINAL_COLUMNS = [
     "order_count",
     "aov",
     "close_loop_merchant_name",
-    "poi_item_publish_cnt_db"
+    "poi_item_publish_cnt_db",
+    "report_month",
+    "report_week",
+    "cutoff_date",
+    "fulfill_amount_usd_weekly",
 ]
 
 # ======================================================
-# STREAMLIT UI
+# HELPERS
+# ======================================================
+
+def generate_month_options():
+    """Generate last 6 months + next 2 months as YYYY-MM strings."""
+    today = date.today()
+    months = []
+    for i in range(-5, 3):
+        month = today.month + i
+        year = today.year
+        while month < 1:
+            month += 12
+            year -= 1
+        while month > 12:
+            month -= 12
+            year += 1
+        months.append(f"{year}-{month:02d}")
+    return months
+
+
+def month_str_to_date(month_str):
+    """Convert '2026-03' to date(2026, 3, 1)."""
+    year, month = map(int, month_str.split("-"))
+    return date(year, month, 1)
+
+
+def fetch_previous_cumulative(conn, report_month_date, report_week):
+    """
+    Fetch previous week's fulfill_amount_usd keyed by (uniq_id, industry_source).
+    - If week > 1: fetch week - 1 of same month
+    - If week == 1: return empty dict (baseline = 0)
+    """
+    if report_week == 1:
+        return {}
+
+    prev_week = report_week - 1
+
+    sql = f"""
+        SELECT uniq_id, industry_source, fulfill_amount_usd
+        FROM {SCHEMA_NAME}.{TABLE_NAME}
+        WHERE report_month = %s
+        AND report_week = %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (report_month_date, prev_week))
+        rows = cur.fetchall()
+
+    # Key: (uniq_id, industry_source) → cumulative value
+    return {(r[0], r[1]): (r[2] or 0) for r in rows}
+
+
+def delete_existing_week(conn, report_month_date, report_week):
+    """Delete rows for the same month + week before re-importing."""
+    sql = f"""
+        DELETE FROM {SCHEMA_NAME}.{TABLE_NAME}
+        WHERE report_month = %s
+        AND report_week = %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (report_month_date, report_week))
+    deleted = conn.cursor()
+    return
+
+
+def load_and_transform_xlsx(uploaded_file):
+    """
+    Read all 3 sheets from XLSX, rename columns,
+    standardize, and return a single merged DataFrame.
+    """
+    xls = pd.ExcelFile(uploaded_file)
+    all_data = []
+
+    for sheet_name, industry_name in SHEETS.items():
+        if sheet_name not in xls.sheet_names:
+            st.error(f"❌ Sheet '{sheet_name}' not found in uploaded file.")
+            st.stop()
+
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+
+        # ---- Column Standardization ----
+        if industry_name in ["accommodation", "attraction"]:
+            df = df.rename(columns={
+                "(primary key)item_id": "item_id",
+                "item URL": "item_url",
+                "alliance_open_loop_pay_amount_dollar": "pay_amount_usd",
+                "alliance_open_loop_fulfill_amount_dollar": "fulfill_amount_usd",
+                "alliance_open_loop_pay_order_cnt": "order_count",
+                "AOV": "aov",
+                "CTR": "ctr",
+                "CVR": "cvr"
+            })
+            df["close_loop_merchant_name"] = None
+
+        elif industry_name == "fnb":
+            df = df.rename(columns={
+                "(primary key)item_id": "item_id",
+                "item URL": "item_url",
+                "alliance_close_loop_pay_pay_amount_dollar": "pay_amount_usd",
+                "alliance_close_loop_fulfill_pay_amount_dollar": "fulfill_amount_usd",
+                "alliance_close_loop_pay_shop_order_cnt": "order_count",
+                "Pay AOV": "aov",
+                "Close Loop CVR - Supply POI Content Source": "cvr",
+                "CTR": "ctr",
+                "close_loop_has_service_merchant_names": "close_loop_merchant_name"
+            })
+
+        df["industry_source"] = industry_name
+
+        # ---- Clean Numerics ----
+        numeric_cols = [
+            "author_actual_sales_power", "poi_vv", "ctr", "cvr",
+            "pay_amount_usd", "fulfill_amount_usd", "order_count",
+            "aov", "poi_item_publish_cnt_db"
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # ---- Ensure all required columns exist ----
+        base_cols = [c for c in FINAL_COLUMNS if c not in (
+            "report_month", "report_week", "cutoff_date", "fulfill_amount_usd_weekly"
+        )]
+        for col in base_cols:
+            if col not in df.columns:
+                df[col] = None
+
+        df = df[base_cols]
+        all_data.append(df)
+
+    return pd.concat(all_data, ignore_index=True)
+
+
+# ======================================================
+# RENDER
 # ======================================================
 
 def render():
-
-    st.title("📊 TikTok Go Video Transaction Importer V23")
+    st.title("📊 TikTok Go Video Transaction Importer")
 
     # --------------------------------------------------
     # IMPORT SETTINGS
     # --------------------------------------------------
-
     st.subheader("Import Settings")
 
-    import_month = st.selectbox(
-        "Select Month",
-        list(range(1,13))
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        month_options = generate_month_options()
+        # Default to current month
+        current_month_str = date.today().strftime("%Y-%m")
+        default_idx = month_options.index(current_month_str) if current_month_str in month_options else 0
+        selected_month = st.selectbox("Month", month_options, index=default_idx)
+
+    with col2:
+        selected_week = st.selectbox("Week", [1, 2, 3, 4, 5])
+
+    with col3:
+        cutoff_date = st.date_input("Cutoff Date", value=date.today())
+
+    report_month_date = month_str_to_date(selected_month)
+
+    st.info(
+        f"📌 Importing: **{selected_month}** · **Week {selected_week}** · "
+        f"Cutoff **{cutoff_date}**"
     )
 
-    import_week = st.selectbox(
-        "Select Week",
-        [1,2,3,4,5]
-    )
-
-    cutoff_date = st.date_input(
-        "Cutoff Date (Will overwrite item_create_date)",
-        value=date.today()
-    )
-
+    # --------------------------------------------------
+    # FILE UPLOAD
+    # --------------------------------------------------
     uploaded_file = st.file_uploader("Upload XLSX File", type=["xlsx"])
 
-    if uploaded_file:
+    if not uploaded_file:
+        return
 
-        try:
+    try:
+        # ---- Load & Transform ----
+        final_df = load_and_transform_xlsx(uploaded_file)
 
-            xls = pd.ExcelFile(uploaded_file)
+        # ---- Attach import metadata ----
+        final_df["report_month"] = report_month_date
+        final_df["report_week"] = selected_week
+        final_df["cutoff_date"] = cutoff_date
+        final_df["item_create_date"] = cutoff_date  # overwrite with cutoff
 
-            all_data = []
+        # ---- Preview ----
+        st.success(f"✅ Rows ready for import: **{len(final_df)}**")
 
-            for sheet_name, industry_name in SHEETS.items():
+        with st.expander("🔍 Preview Data (first 20 rows)", expanded=False):
+            st.dataframe(final_df.head(20), use_container_width=True)
 
-                if sheet_name not in xls.sheet_names:
-                    st.error(f"Sheet '{sheet_name}' not found.")
-                    st.stop()
+        # --------------------------------------------------
+        # IMPORT BUTTON
+        # --------------------------------------------------
+        if st.button("💾 Import to Database", type="primary"):
 
-                df = pd.read_excel(xls, sheet_name=sheet_name)
+            conn = get_connection()
 
-                # ======================================================
-                # COLUMN STANDARDIZATION
-                # ======================================================
+            try:
+                # ---- Step 1: Fetch previous week cumulative ----
+                prev_cumulative = fetch_previous_cumulative(
+                    conn, report_month_date, selected_week
+                )
 
-                if industry_name in ["accommodation", "attraction"]:
+                if selected_week == 1:
+                    st.info("ℹ️ Week 1 detected — weekly value = cumulative (no previous week baseline).")
+                else:
+                    st.info(f"ℹ️ Week {selected_week} detected — calculating delta vs Week {selected_week - 1}.")
 
-                    df = df.rename(columns={
-                        "(primary key)item_id": "item_id",
-                        "item URL": "item_url",
-                        "alliance_open_loop_pay_amount_dollar": "pay_amount_usd",
-                        "alliance_open_loop_fulfill_amount_dollar": "fulfill_amount_usd",
-                        "alliance_open_loop_pay_order_cnt": "order_count",
-                        "AOV": "aov",
-                        "CTR": "ctr",
-                        "CVR": "cvr"
-                    })
+                # ---- Step 2: Calculate weekly delta ----
+                def calc_weekly(row):
+                    key = (row["uniq_id"], row["industry_source"])
+                    prev = prev_cumulative.get(key, 0)
+                    current = row["fulfill_amount_usd"] or 0
+                    return max(current - prev, 0)
 
-                    df["close_loop_merchant_name"] = None
+                final_df["fulfill_amount_usd_weekly"] = final_df.apply(calc_weekly, axis=1)
 
-                elif industry_name == "fnb":
+                # ---- Step 3: Delete existing rows for same month + week ----
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_NAME} "
+                        f"WHERE report_month = %s AND report_week = %s",
+                        (report_month_date, selected_week)
+                    )
+                    deleted_count = cur.rowcount
 
-                    df = df.rename(columns={
-                        "(primary key)item_id": "item_id",
-                        "item URL": "item_url",
-                        "alliance_close_loop_pay_pay_amount_dollar": "pay_amount_usd",
-                        "alliance_close_loop_fulfill_pay_amount_dollar": "fulfill_amount_usd",
-                        "alliance_close_loop_pay_shop_order_cnt": "order_count",
-                        "Pay AOV": "aov",
-                        "Close Loop CVR - Supply POI Content Source": "cvr",
-                        "CTR": "ctr",
-                        "close_loop_has_service_merchant_names": "close_loop_merchant_name"
-                    })
+                if deleted_count > 0:
+                    st.warning(f"🗑️ Deleted **{deleted_count}** existing rows for {selected_month} Week {selected_week}.")
 
-                # ======================================================
-                # INDUSTRY
-                # ======================================================
-
-                df["industry_source"] = industry_name
-
-                # ======================================================
-                # CLEAN NUMERIC
-                # ======================================================
-
-                numeric_cols = [
-                    "author_actual_sales_power",
-                    "poi_vv",
-                    "ctr",
-                    "cvr",
-                    "pay_amount_usd",
-                    "fulfill_amount_usd",
-                    "order_count",
-                    "aov",
-                    "poi_item_publish_cnt_db"
-                ]
-
-                for col in numeric_cols:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-                # ======================================================
-                # ENSURE REQUIRED COLUMNS
-                # ======================================================
-
-                for col in FINAL_COLUMNS:
-                    if col not in df.columns:
-                        df[col] = None
-
-                df = df[FINAL_COLUMNS]
-
-                all_data.append(df)
-
-            # ======================================================
-            # MERGE SHEETS
-            # ======================================================
-
-            final_df = pd.concat(all_data, ignore_index=True)
-
-            st.success(f"Rows ready for insert: {len(final_df)}")
-            st.dataframe(final_df.head())
-
-            # ======================================================
-            # INSERT BUTTON
-            # ======================================================
-
-            if st.button("Import to Database"):
-
-                conn = get_connection()
-                cursor = conn.cursor()
-
-                # ---------------------------------------------
-                # DELETE EXISTING DATA FOR SAME WEEK
-                # ---------------------------------------------
-
-                delete_query = f"""
-                DELETE FROM {SCHEMA_NAME}.{TABLE_NAME}
-                WHERE DATE_TRUNC('month', item_create_date) = DATE_TRUNC('month', %s::timestamp)
-                AND EXTRACT(week FROM item_create_date) = %s
-                """
-
-                cursor.execute(delete_query, (cutoff_date, import_week))
-
-                # ---------------------------------------------
-                # INSERT
-                # ---------------------------------------------
-
+                # ---- Step 4: Insert ----
+                insert_cols = FINAL_COLUMNS
                 insert_query = f"""
                     INSERT INTO {SCHEMA_NAME}.{TABLE_NAME} (
-                        {",".join(FINAL_COLUMNS)}
+                        {", ".join(insert_cols)}
                     )
                     VALUES %s
-                    ON CONFLICT (item_id, industry_source)
-                    DO NOTHING
                 """
 
-                values = [tuple(row) for row in final_df.to_numpy()]
+                values = [
+                    tuple(
+                        row[col] if pd.notna(row[col]) else None
+                        for col in insert_cols
+                    )
+                    for _, row in final_df.iterrows()
+                ]
 
-                execute_values(cursor, insert_query, values)
-
-                # ---------------------------------------------
-                # UPDATE CUTOFF DATE
-                # ---------------------------------------------
-
-                update_query = f"""
-                UPDATE {SCHEMA_NAME}.{TABLE_NAME}
-                SET item_create_date = %s
-                WHERE item_create_date IS NULL
-                """
-
-                cursor.execute(update_query, (cutoff_date,))
+                with conn.cursor() as cur:
+                    execute_values(cur, insert_query, values)
 
                 conn.commit()
 
-                cursor.close()
+                st.success(
+                    f"✅ Import completed! "
+                    f"**{len(final_df)}** rows inserted for "
+                    f"**{selected_month}** · Week **{selected_week}** · "
+                    f"Cutoff **{cutoff_date}**"
+                )
+
+                # ---- Summary stats ----
+                st.subheader("📊 Import Summary")
+                summary = final_df.groupby("industry_source").agg(
+                    rows=("uniq_id", "count"),
+                    total_fulfill_cumulative=("fulfill_amount_usd", "sum"),
+                    total_fulfill_weekly=("fulfill_amount_usd_weekly", "sum"),
+                ).reset_index()
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+
+            except Exception as e:
+                conn.rollback()
+                st.error(f"❌ Import failed, rolled back. Error: {str(e)}")
+
+            finally:
                 conn.close()
 
-                st.success("✅ Import completed successfully.")
-
-        except Exception as e:
-
-            st.error(f"Error occurred: {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Error reading file: {str(e)}")
