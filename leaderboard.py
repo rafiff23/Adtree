@@ -125,22 +125,43 @@ def fetch_previous_cumulative(conn, report_month_date, report_week):
 def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Per sheet, duplicates share the same item_id + industry_source.
-    Strategy: sort by fulfill_amount_usd DESC, keep first (= MAX row).
-    This keeps ALL columns of the best row, no groupby needed.
+    Strategy: groupby (item_id, industry_source), SUM numeric cols, keep first for meta cols.
+    This correctly accumulates values across duplicate rows.
     """
     before = len(df)
 
-    df = (
-        df.sort_values("fulfill_amount_usd", ascending=False, na_position="last")
-        .drop_duplicates(subset=["item_id", "industry_source"], keep="first")
-        .reset_index(drop=True)
+    # Cast item_id to string to avoid float/int mixing
+    df["item_id"] = df["item_id"].astype(str).str.strip()
+    df["item_id"] = df["item_id"].replace("nan", None).replace("", None)
+
+    # Temp safe keys for groupby (avoids dropping nulls)
+    df["_item_id_safe"]   = df["item_id"].fillna("__NULL__")
+    df["_industry_safe"]  = df["industry_source"].fillna("__NULL__")
+
+    agg_dict = {}
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            agg_dict[col] = "sum"
+    for col in META_COLS:
+        if col in df.columns:
+            agg_dict[col] = "first"
+
+    deduped = (
+        df.groupby(["_item_id_safe", "_industry_safe"], as_index=False, sort=False)
+        .agg(agg_dict)
     )
 
-    after = len(df)
-    if before != after:
-        st.warning(f"⚠️ Removed **{before - after}** duplicate rows (kept row with highest fulfill_amount_usd).")
+    # Restore original key values
+    deduped["item_id"]        = deduped["_item_id_safe"].replace("__NULL__", None)
+    deduped["industry_source"] = deduped["_industry_safe"].replace("__NULL__", None)
+    deduped = deduped.drop(columns=["_item_id_safe", "_industry_safe"])
+    df.drop(columns=["_item_id_safe", "_industry_safe"], inplace=True)
 
-    return df
+    after = len(deduped)
+    if before != after:
+        st.warning(f"⚠️ Deduplicated **{before - after}** duplicate rows (summed numeric values).")
+
+    return deduped.reset_index(drop=True)
 
 
 def load_and_transform_xlsx(uploaded_file):
@@ -205,7 +226,7 @@ def load_and_transform_xlsx(uploaded_file):
 # ======================================================
 
 def render():
-    st.title("📊 TikTok Go Video Transaction Importer V2")
+    st.title("📊 TikTok Go Video Transaction Importer")
 
     st.subheader("Import Settings")
     col1, col2, col3 = st.columns(3)
