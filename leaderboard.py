@@ -119,7 +119,8 @@ def fetch_previous_cumulative(conn, report_month_date, report_week):
     with conn.cursor() as cur:
         cur.execute(sql, (report_month_date, report_week - 1))
         rows = cur.fetchall()
-    return {(r[0], r[1]): (r[2] or 0) for r in rows}
+    # Cast to float here to avoid decimal.Decimal vs float type error during subtraction
+    return {(r[0], r[1]): float(r[2] or 0) for r in rows}
 
 
 def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -298,18 +299,12 @@ def render():
                     st.info(f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. Matched **{matched}/{len(final_df)}** rows.")
 
                 # Step 2: Calculate weekly delta
-                # def calc_weekly(row):
-                #     key     = (row["uniq_id"], row["industry_source"])
-                #     prev    = prev_cumulative.get(key, 0)
-                #     current = row["fulfill_amount_usd"] if pd.notna(row["fulfill_amount_usd"]) else 0
-                #     return max(current - prev, 0)
-                
                 def calc_weekly(row):
                     key     = (row["uniq_id"], row["industry_source"])
-                    prev    = float(prev_cumulative.get(key, 0))
+                    prev    = prev_cumulative.get(key, 0.0)  # already float from fetch
                     current = float(row["fulfill_amount_usd"]) if pd.notna(row["fulfill_amount_usd"]) else 0.0
-                    return max(current - prev, 0)
-                
+                    return max(current - prev, 0.0)
+
                 final_df["fulfill_amount_usd_weekly"] = final_df.apply(calc_weekly, axis=1)
 
                 # Step 3: Delete existing rows for same month + week
