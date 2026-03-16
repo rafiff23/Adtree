@@ -298,12 +298,18 @@ def render():
                     st.info(f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. Matched **{matched}/{len(final_df)}** rows.")
 
                 # Step 2: Calculate weekly delta
+                # def calc_weekly(row):
+                #     key     = (row["uniq_id"], row["industry_source"])
+                #     prev    = prev_cumulative.get(key, 0)
+                #     current = row["fulfill_amount_usd"] if pd.notna(row["fulfill_amount_usd"]) else 0
+                #     return max(current - prev, 0)
+                
                 def calc_weekly(row):
                     key     = (row["uniq_id"], row["industry_source"])
-                    prev    = prev_cumulative.get(key, 0)
-                    current = row["fulfill_amount_usd"] if pd.notna(row["fulfill_amount_usd"]) else 0
+                    prev    = float(prev_cumulative.get(key, 0))
+                    current = float(row["fulfill_amount_usd"]) if pd.notna(row["fulfill_amount_usd"]) else 0.0
                     return max(current - prev, 0)
-
+                
                 final_df["fulfill_amount_usd_weekly"] = final_df.apply(calc_weekly, axis=1)
 
                 # Step 3: Delete existing rows for same month + week
