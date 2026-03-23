@@ -78,7 +78,7 @@ def make_unmatched_template_bytes(unmatched_ids: list) -> bytes:
 def run_onboarding_importer():
     st.markdown("### 📅 Onboarding Date Importer")
     st.caption(
-        "Upload an XLSX that contains **'Unique ID'** and **'Date Joined'** columns. "
+        "Upload an XLSX that contains **'Unique ID'** and **'Date joined'** columns. "
         "Matched creators will have their `onboarding_date` and `month_label` updated in the DB."
     )
 
@@ -92,7 +92,7 @@ def run_onboarding_importer():
         st.error(f"Failed to read file: {e}")
         return
 
-    required = {"Unique ID", "Date Joined"}
+    required = {"Unique ID", "Date joined"}
     missing  = required - set(df.columns)
     if missing:
         st.error(f"Missing required columns: {missing}")
