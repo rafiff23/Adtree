@@ -19,34 +19,34 @@ def get_connection():
         cursor_factory=RealDictCursor,
     )
 
-# ── XLSX template helpers ──────────────────────────────────────────────────────
+# ── XLSX template helpers ─────────────────────────────────────────────────────
 REGISTRY_COLUMNS = [
     "tiktok_id", "followers", "full_name", "domicile",
     "uid", "phone_number", "tiktok_link", "binding_status",
     "onboarding_date", "level",
 ]
 
-HEADER_FILL   = PatternFill("solid", start_color="1E293B", end_color="1E293B")
-HEADER_FONT   = Font(bold=True, color="FFFFFF", name="Arial", size=10)
-CELL_FONT     = Font(name="Arial", size=10)
-BORDER_SIDE   = Side(style="thin", color="CBD5E1")
-CELL_BORDER   = Border(left=BORDER_SIDE, right=BORDER_SIDE, top=BORDER_SIDE, bottom=BORDER_SIDE)
-CENTER        = Alignment(horizontal="center", vertical="center")
-LEFT          = Alignment(horizontal="left", vertical="center")
+HEADER_FILL = PatternFill("solid", start_color="1E293B", end_color="1E293B")
+HEADER_FONT = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+CELL_FONT   = Font(name="Arial", size=10)
+BORDER_SIDE = Side(style="thin", color="CBD5E1")
+CELL_BORDER = Border(left=BORDER_SIDE, right=BORDER_SIDE, top=BORDER_SIDE, bottom=BORDER_SIDE)
+CENTER      = Alignment(horizontal="center", vertical="center")
+LEFT        = Alignment(horizontal="left", vertical="center")
+
 
 def _apply_header(ws, columns):
     ws.row_dimensions[1].height = 30
     for ci, col in enumerate(columns, 1):
         cell = ws.cell(row=1, column=ci, value=col)
-        cell.fill   = HEADER_FILL
-        cell.font   = HEADER_FONT
-        cell.border = CELL_BORDER
+        cell.fill      = HEADER_FILL
+        cell.font      = HEADER_FONT
+        cell.border    = CELL_BORDER
         cell.alignment = CENTER
         ws.column_dimensions[cell.column_letter].width = 22
 
 
 def make_registry_template_bytes() -> bytes:
-    """Blank template for Creator Registry import."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Creator Registry"
@@ -57,24 +57,18 @@ def make_registry_template_bytes() -> bytes:
 
 
 def make_unmatched_template_bytes(unmatched_ids: list) -> bytes:
-    """
-    Template pre-filled with unmatched tiktok_ids.
-    All other DB columns are blank for the user to fill in.
-    """
     wb = Workbook()
     ws = wb.active
     ws.title = "Unmatched Creators"
     _apply_header(ws, REGISTRY_COLUMNS)
-
     for ri, tid in enumerate(unmatched_ids, 2):
         ws.row_dimensions[ri].height = 20
         for ci, col in enumerate(REGISTRY_COLUMNS, 1):
-            val = tid if col == "tiktok_id" else ""
+            val  = tid if col == "tiktok_id" else ""
             cell = ws.cell(row=ri, column=ci, value=val)
-            cell.font   = CELL_FONT
-            cell.border = CELL_BORDER
+            cell.font      = CELL_FONT
+            cell.border    = CELL_BORDER
             cell.alignment = LEFT
-
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -92,49 +86,51 @@ def run_onboarding_importer():
     if not uploaded:
         return
 
-    # Read xlsx
     try:
         df = pd.read_excel(uploaded, dtype=str)
     except Exception as e:
         st.error(f"Failed to read file: {e}")
         return
 
-    required = {"Unique ID", "Date joined"}
-    missing = required - set(df.columns)
+    required = {"Unique ID", "Date Joined"}
+    missing  = required - set(df.columns)
     if missing:
         st.error(f"Missing required columns: {missing}")
         return
 
     df["_uid_norm"] = df["Unique ID"].str.strip().str.lower()
-    df["_date_raw"] = pd.to_datetime(df["Date joined"], errors="coerce")
+    df["_date_raw"] = pd.to_datetime(df["Date Joined"], errors="coerce")
 
     st.markdown(f"**Rows in file:** {len(df)}")
 
     if st.button("▶ Run Import", key="onboarding_run"):
+
+        # ── 1. Fetch existing tiktok_ids ──────────────────────────────────────
         try:
             conn = get_connection()
-        except Exception as e:
-            st.error(f"DB connection failed: {e}")
-            return
-
-        with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT tiktok_id FROM public.creator_registry")
                 db_ids = {row["tiktok_id"].strip().lower() for row in cur.fetchall()}
+            conn.close()
+        except Exception as e:
+            st.error(f"DB connection failed: {e}")
+            return
 
         matched_rows   = df[df["_uid_norm"].isin(db_ids)]
         unmatched_rows = df[~df["_uid_norm"].isin(db_ids)]
 
         updated, skipped_bad_date = 0, 0
 
+        # ── 2. Update matched rows (fresh connection, explicit commit) ────────
         if len(matched_rows):
-            with conn:
+            try:
+                conn = get_connection()
                 with conn.cursor() as cur:
                     for _, row in matched_rows.iterrows():
                         if pd.isna(row["_date_raw"]):
                             skipped_bad_date += 1
                             continue
-                        date_val   = row["_date_raw"].date()
+                        date_val    = row["_date_raw"].date()
                         month_label = row["_date_raw"].strftime("%B %Y")
                         cur.execute(
                             """
@@ -146,8 +142,13 @@ def run_onboarding_importer():
                             (date_val, month_label, row["_uid_norm"]),
                         )
                         updated += 1
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                st.error(f"Update failed: {e}")
+                return
 
-        # ── Results ──
+        # ── 3. Results ────────────────────────────────────────────────────────
         col1, col2, col3 = st.columns(3)
         col1.metric("✅ Updated",   updated)
         col2.metric("⚠️ Unmatched", len(unmatched_rows))
@@ -160,10 +161,10 @@ def run_onboarding_importer():
             st.warning(
                 f"{len(unmatched_rows)} ID(s) not found in DB. "
                 "Download the template below, fill in the missing details, "
-                "then use the **Creator Registry** importer to add them."
+                "then use the **Creator Registry** tab to add them."
             )
             unmatched_ids = unmatched_rows["Unique ID"].str.strip().tolist()
-            xlsx_bytes = make_unmatched_template_bytes(unmatched_ids)
+            xlsx_bytes    = make_unmatched_template_bytes(unmatched_ids)
             st.download_button(
                 label="⬇ Download Unmatched Template",
                 data=xlsx_bytes,
@@ -171,11 +172,8 @@ def run_onboarding_importer():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_unmatched",
             )
-
             with st.expander("Preview unmatched IDs"):
-                st.dataframe(unmatched_rows[["Unique ID", "Date joined"]], use_container_width=True)
-
-        conn.close()
+                st.dataframe(unmatched_rows[["Unique ID", "Date Joined"]], use_container_width=True)
 
 
 # ── CREATOR REGISTRY IMPORTER ─────────────────────────────────────────────────
@@ -186,7 +184,6 @@ def run_registry_importer():
         "Download the template, fill in the details (one row per creator), then upload."
     )
 
-    # Template download
     st.markdown("#### Step 1 — Download Template")
     st.download_button(
         label="⬇ Download Blank Template",
@@ -207,7 +204,6 @@ def run_registry_importer():
         st.error(f"Failed to read file: {e}")
         return
 
-    # Validate columns
     missing = set(REGISTRY_COLUMNS) - set(df.columns)
     if missing:
         st.error(f"Template columns missing: {missing}. Please use the provided template.")
@@ -216,35 +212,36 @@ def run_registry_importer():
     df = df[REGISTRY_COLUMNS].copy()
     df["tiktok_id"] = df["tiktok_id"].str.strip()
     df = df[df["tiktok_id"].notna() & (df["tiktok_id"] != "")]
-
-    # Parse onboarding_date → also derive month_label
     df["_date"] = pd.to_datetime(df["onboarding_date"], errors="coerce")
 
     st.markdown(f"**Rows ready to insert:** {len(df)}")
 
     bad_dates = df[df["_date"].isna() & df["onboarding_date"].notna() & (df["onboarding_date"] != "")]
     if len(bad_dates):
-        st.warning(f"{len(bad_dates)} row(s) have unparseable dates — they will be inserted with NULL onboarding_date.")
+        st.warning(f"{len(bad_dates)} row(s) have unparseable dates — will be inserted with NULL onboarding_date.")
 
     with st.expander("Preview data"):
         st.dataframe(df[REGISTRY_COLUMNS].head(20), use_container_width=True)
 
     if st.button("▶ Insert into DB", key="registry_run"):
+
+        # ── 1. Fetch existing ids ─────────────────────────────────────────────
         try:
             conn = get_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT tiktok_id FROM public.creator_registry")
+                existing = {row["tiktok_id"].strip().lower() for row in cur.fetchall()}
+            conn.close()
         except Exception as e:
             st.error(f"DB connection failed: {e}")
             return
 
-        # Check for existing tiktok_ids to avoid duplicates
-        with conn.cursor() as cur:
-            cur.execute("SELECT tiktok_id FROM public.creator_registry")
-            existing = {row["tiktok_id"].strip().lower() for row in cur.fetchall()}
-
         inserted, skipped_dup = 0, 0
         errors = []
 
-        with conn:
+        # ── 2. Insert (fresh connection, explicit commit) ─────────────────────
+        try:
+            conn = get_connection()
             with conn.cursor() as cur:
                 for _, row in df.iterrows():
                     if row["tiktok_id"].lower() in existing:
@@ -278,14 +275,21 @@ def run_registry_importer():
                                 _val("binding_status"),
                                 date_val,
                                 month_label,
-                                1,      # agency_id auto-fill
-                                None,   # notes left blank
+                                1,    # agency_id auto-fill
+                                None, # notes left blank
                             ),
                         )
                         inserted += 1
-                    except Exception as e:
-                        errors.append(f"Row {row['tiktok_id']}: {e}")
+                    except Exception as row_err:
+                        errors.append(f"Row {row['tiktok_id']}: {row_err}")
 
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            st.error(f"Insert failed: {e}")
+            return
+
+        # ── 3. Results ────────────────────────────────────────────────────────
         col1, col2, col3 = st.columns(3)
         col1.metric("✅ Inserted",   inserted)
         col2.metric("⏭ Duplicates", skipped_dup)
@@ -297,10 +301,8 @@ def run_registry_importer():
             st.info(f"{skipped_dup} row(s) skipped — tiktok_id already exists in DB.")
         if errors:
             with st.expander("Error details"):
-                for e in errors:
-                    st.error(e)
-
-        conn.close()
+                for err in errors:
+                    st.error(err)
 
 
 # ── PAGE ──────────────────────────────────────────────────────────────────────
