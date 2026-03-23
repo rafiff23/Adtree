@@ -106,7 +106,7 @@ def run_onboarding_importer():
         return
 
     df["_uid_norm"] = df["Unique ID"].str.strip().str.lower()
-    df["_date_raw"] = pd.to_datetime(df["Date Joined"], errors="coerce")
+    df["_date_raw"] = pd.to_datetime(df["Date joined"], errors="coerce")
 
     st.markdown(f"**Rows in file:** {len(df)}")
 
@@ -173,7 +173,7 @@ def run_onboarding_importer():
             )
 
             with st.expander("Preview unmatched IDs"):
-                st.dataframe(unmatched_rows[["Unique ID", "Date Joined"]], use_container_width=True)
+                st.dataframe(unmatched_rows[["Unique ID", "Date joined"]], use_container_width=True)
 
         conn.close()
 
