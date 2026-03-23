@@ -99,7 +99,7 @@ def run_onboarding_importer():
         st.error(f"Failed to read file: {e}")
         return
 
-    required = {"Unique ID", "Date Joined"}
+    required = {"Unique ID", "Date joined"}
     missing = required - set(df.columns)
     if missing:
         st.error(f"Missing required columns: {missing}")
