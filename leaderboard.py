@@ -27,8 +27,9 @@ def get_connection():
 # CONFIG
 # ======================================================
 
-SCHEMA_NAME = "leaderboard"
-TABLE_NAME  = "tiktok_go_video_transactions"
+SCHEMA_NAME   = "leaderboard"
+TABLE_RAW     = "tiktok_go_video_transactions"
+TABLE_SUMMARY = "tiktok_go_video_summary"
 
 SHEETS = {
     "Accommodation  video transactio": "accommodation",
@@ -109,35 +110,32 @@ def month_str_to_date(month_str):
     return date(year, month, 1)
 
 def fetch_previous_cumulative(conn, report_month_date, report_week):
+    """
+    Fetch previous week's fulfill_amount_usd from the SUMMARY table,
+    keyed by item_url (globally unique per video).
+    """
     if report_week == 1:
         return {}
     sql = f"""
-        SELECT uniq_id, industry_source, fulfill_amount_usd
-        FROM {SCHEMA_NAME}.{TABLE_NAME}
+        SELECT item_url, fulfill_amount_usd
+        FROM {SCHEMA_NAME}.{TABLE_SUMMARY}
         WHERE report_month = %s AND report_week = %s
     """
     with conn.cursor() as cur:
         cur.execute(sql, (report_month_date, report_week - 1))
         rows = cur.fetchall()
-    # Cast to float here to avoid decimal.Decimal vs float type error during subtraction
-    return {(r[0], r[1]): float(r[2] or 0) for r in rows}
+    # Cast to float to avoid decimal.Decimal vs float type error
+    return {r[0]: float(r[1] or 0) for r in rows}
 
 
 def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Per sheet, duplicates share the same item_id + industry_source.
-    Strategy: groupby (item_id, industry_source), SUM numeric cols, keep first for meta cols.
-    This correctly accumulates values across duplicate rows.
+    Deduplicate by item_url — each video URL should appear only once per sheet.
+    Strategy: groupby item_url, SUM numeric cols, keep first for meta cols.
     """
     before = len(df)
 
-    # Cast item_id to string to avoid float/int mixing
-    df["item_id"] = df["item_id"].astype(str).str.strip()
-    df["item_id"] = df["item_id"].replace("nan", None).replace("", None)
-
-    # Temp safe keys for groupby (avoids dropping nulls)
-    df["_item_id_safe"]   = df["item_id"].fillna("__NULL__")
-    df["_industry_safe"]  = df["industry_source"].fillna("__NULL__")
+    df["_url_safe"] = df["item_url"].fillna("__NULL__")
 
     agg_dict = {}
     for col in NUMERIC_COLS:
@@ -146,17 +144,17 @@ def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
     for col in META_COLS:
         if col in df.columns:
             agg_dict[col] = "first"
+    if "item_id" in df.columns:
+        agg_dict["item_id"] = "first"
 
     deduped = (
-        df.groupby(["_item_id_safe", "_industry_safe"], as_index=False, sort=False)
+        df.groupby("_url_safe", as_index=False, sort=False)
         .agg(agg_dict)
     )
 
-    # Restore original key values
-    deduped["item_id"]        = deduped["_item_id_safe"].replace("__NULL__", None)
-    deduped["industry_source"] = deduped["_industry_safe"].replace("__NULL__", None)
-    deduped = deduped.drop(columns=["_item_id_safe", "_industry_safe"])
-    df.drop(columns=["_item_id_safe", "_industry_safe"], inplace=True)
+    deduped["item_url"] = deduped["_url_safe"].replace("__NULL__", None)
+    deduped = deduped.drop(columns=["_url_safe"])
+    df.drop(columns=["_url_safe"], inplace=True)
 
     after = len(deduped)
     if before != after:
@@ -174,7 +172,6 @@ def load_and_transform_xlsx(uploaded_file):
             st.error(f"❌ Sheet '{sheet_name}' not found in uploaded file.")
             st.stop()
 
-        # Read item_id as string to avoid float conversion
         df = pd.read_excel(xls, sheet_name=sheet_name, dtype={"(primary key)item_id": str})
 
         # ---- Column rename ----
@@ -214,7 +211,7 @@ def load_and_transform_xlsx(uploaded_file):
             if col not in df.columns:
                 df[col] = None
 
-        # ---- Deduplicate within this sheet ----
+        # ---- Deduplicate by item_url within this sheet ----
         df = deduplicate_df(df)
 
         all_data.append(df)
@@ -256,13 +253,12 @@ def render():
         final_df = load_and_transform_xlsx(uploaded_file)
 
         # ---- Attach metadata ----
-        final_df["report_month"]             = report_month_date
-        final_df["report_week"]              = selected_week
-        final_df["cutoff_date"]              = cutoff_date
-        final_df["item_create_date"]         = cutoff_date
-        final_df["fulfill_amount_usd_weekly"] = None  # calculated before insert
+        final_df["report_month"]              = report_month_date
+        final_df["report_week"]               = selected_week
+        final_df["cutoff_date"]               = cutoff_date
+        final_df["item_create_date"]          = cutoff_date
+        final_df["fulfill_amount_usd_weekly"] = None
 
-        # Ensure all final columns exist
         for col in FINAL_COLUMNS:
             if col not in final_df.columns:
                 final_df[col] = None
@@ -270,14 +266,14 @@ def render():
         st.success(f"✅ Rows ready for import: **{len(final_df)}**")
 
         with st.expander("🔍 Preview (first 20 rows)", expanded=False):
-            preview_cols = ["item_id", "industry_source", "uniq_id", "fulfill_amount_usd", "pay_amount_usd", "order_count"]
+            preview_cols = ["item_url", "industry_source", "uniq_id", "fulfill_amount_usd", "pay_amount_usd", "order_count"]
             st.dataframe(final_df[preview_cols].head(20), use_container_width=True)
 
-        # ---- Safety check: show remaining dupes if any ----
-        dupes = final_df.duplicated(subset=["item_id", "industry_source"], keep=False)
+        # ---- Safety check ----
+        dupes = final_df.duplicated(subset=["item_url"], keep=False)
         if dupes.any():
-            st.error(f"❌ {dupes.sum()} duplicate (item_id + industry_source) rows still exist. Cannot import.")
-            st.dataframe(final_df[dupes][["item_id", "industry_source", "uniq_id", "fulfill_amount_usd"]].head(20))
+            st.error(f"❌ {dupes.sum()} duplicate item_url rows still exist. Cannot import.")
+            st.dataframe(final_df[dupes][["item_url", "industry_source", "uniq_id", "fulfill_amount_usd"]].head(20))
             return
 
         # ======================================================
@@ -286,41 +282,36 @@ def render():
         if st.button("💾 Import to Database", type="primary"):
             conn = get_connection()
             try:
-                # Step 1: Previous week cumulative
+                # ── Step 1: Fetch previous week cumulative from SUMMARY table ──
                 prev_cumulative = fetch_previous_cumulative(conn, report_month_date, selected_week)
 
                 if selected_week == 1:
                     st.info("ℹ️ Week 1 — weekly value = cumulative (no previous baseline).")
                 else:
-                    matched = sum(
-                        1 for _, row in final_df.iterrows()
-                        if (row["uniq_id"], row["industry_source"]) in prev_cumulative
-                    )
-                    st.info(f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. Matched **{matched}/{len(final_df)}** rows.")
+                    matched = sum(1 for url in final_df["item_url"] if url in prev_cumulative)
+                    st.info(f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. Matched **{matched}/{len(final_df)}** videos.")
 
-                # Step 2: Calculate weekly delta
+                # ── Step 2: Calculate weekly delta per video ──
                 def calc_weekly(row):
-                    key     = (row["uniq_id"], row["industry_source"])
-                    prev    = prev_cumulative.get(key, 0.0)  # already float from fetch
+                    prev    = prev_cumulative.get(row["item_url"], 0.0)
                     current = float(row["fulfill_amount_usd"]) if pd.notna(row["fulfill_amount_usd"]) else 0.0
                     return max(current - prev, 0.0)
 
                 final_df["fulfill_amount_usd_weekly"] = final_df.apply(calc_weekly, axis=1)
 
-                # Step 3: Delete existing rows for same month + week
+                # ── Step 3: Delete existing raw rows ──
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_NAME} WHERE report_month = %s AND report_week = %s",
+                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_RAW} WHERE report_month = %s AND report_week = %s",
                         (report_month_date, selected_week)
                     )
-                    deleted_count = cur.rowcount
+                    deleted_raw = cur.rowcount
+                if deleted_raw > 0:
+                    st.warning(f"🗑️ Deleted **{deleted_raw}** existing raw rows for {selected_month} Week {selected_week}.")
 
-                if deleted_count > 0:
-                    st.warning(f"🗑️ Deleted **{deleted_count}** existing rows for {selected_month} Week {selected_week}.")
-
-                # Step 4: Insert
+                # ── Step 4: Insert raw rows ──
                 insert_query = f"""
-                    INSERT INTO {SCHEMA_NAME}.{TABLE_NAME} ({", ".join(FINAL_COLUMNS)})
+                    INSERT INTO {SCHEMA_NAME}.{TABLE_RAW} ({", ".join(FINAL_COLUMNS)})
                     VALUES %s
                 """
                 values = [
@@ -330,21 +321,39 @@ def render():
                     )
                     for _, row in final_df.iterrows()
                 ]
-
                 with conn.cursor() as cur:
                     execute_values(cur, insert_query, values)
+
+                # ── Step 5: Delete existing summary rows ──
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_SUMMARY} WHERE report_month = %s AND report_week = %s",
+                        (report_month_date, selected_week)
+                    )
+                    deleted_summary = cur.rowcount
+                if deleted_summary > 0:
+                    st.warning(f"🗑️ Deleted **{deleted_summary}** existing summary rows for {selected_month} Week {selected_week}.")
+
+                # ── Step 6: Insert summary rows ──
+                # final_df is already deduplicated by item_url so it IS the summary
+                insert_summary = f"""
+                    INSERT INTO {SCHEMA_NAME}.{TABLE_SUMMARY} ({", ".join(FINAL_COLUMNS)})
+                    VALUES %s
+                """
+                with conn.cursor() as cur:
+                    execute_values(cur, insert_summary, values)
 
                 conn.commit()
 
                 st.success(
-                    f"✅ **{len(final_df)}** rows inserted for "
+                    f"✅ **{len(final_df)}** rows inserted into raw + summary tables for "
                     f"**{selected_month}** · Week **{selected_week}** · Cutoff **{cutoff_date}**"
                 )
 
-                # Summary
+                # ── Summary display ──
                 st.subheader("📊 Import Summary")
                 summary = final_df.groupby("industry_source").agg(
-                    rows=("uniq_id", "count"),
+                    videos=("item_url", "count"),
                     total_fulfill_cumulative=("fulfill_amount_usd", "sum"),
                     total_fulfill_weekly=("fulfill_amount_usd_weekly", "sum"),
                 ).reset_index()
