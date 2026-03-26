@@ -144,7 +144,7 @@ def render():
 
             binding_status_new = st.selectbox(
                 "Binding Status",
-                ["Unbound", "Bound"],
+                ["Unbound", "Bound", "Invited", "Rejected", "Invite Failed", "Expiring"],
                 index=0 if row["binding_status"] == "Unbound" else 1,
             )
 
