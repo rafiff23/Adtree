@@ -60,6 +60,7 @@ META_COLS = [
     "close_loop_merchant_name",
     "author_id",
     "uniq_id",
+    "industry_source",
 ]
 
 FINAL_COLUMNS = [
