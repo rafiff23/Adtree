@@ -78,8 +78,8 @@ def make_unmatched_template_bytes(unmatched_ids: list) -> bytes:
 def run_onboarding_importer():
     st.markdown("### 📅 Onboarding Date Importer")
     st.caption(
-        "Upload an XLSX that contains **'Unique ID'** and **'Date joined'** columns. "
-        "Matched creators will have their `onboarding_date` and `month_label` updated in the DB."
+        "Upload an XLSX that contains **'Unique ID'**, **'Collaboration start time'**, and **'Sales level'** columns. "
+        "Matched creators will have their `onboarding_date`, `month_label`, and `level` updated in the DB."
     )
 
     uploaded = st.file_uploader("Upload XLSX", type=["xlsx"], key="onboarding_upload")
@@ -92,14 +92,14 @@ def run_onboarding_importer():
         st.error(f"Failed to read file: {e}")
         return
 
-    required = {"Unique ID", "Date joined"}
+    required = {"Unique ID", "Collaboration start time", "Sales level"}
     missing  = required - set(df.columns)
     if missing:
         st.error(f"Missing required columns: {missing}")
         return
 
     df["_uid_norm"] = df["Unique ID"].str.strip().str.lower()
-    df["_date_raw"] = pd.to_datetime(df["Date joined"], errors="coerce")
+    df["_date_raw"] = pd.to_datetime(df["Collaboration start time"], errors="coerce")
 
     st.markdown(f"**Rows in file:** {len(df)}")
 
@@ -132,14 +132,22 @@ def run_onboarding_importer():
                             continue
                         date_val    = row["_date_raw"].date()
                         month_label = row["_date_raw"].strftime("%B %Y")
+                        raw_level   = row.get("Sales level", "")
+                        level_val   = None
+                        if pd.notna(raw_level) and str(raw_level).strip() != "":
+                            try:
+                                level_val = int(float(str(raw_level).strip()))
+                            except ValueError:
+                                pass
                         cur.execute(
                             """
                             UPDATE public.creator_registry
                                SET onboarding_date = %s,
-                                   month_label     = %s
+                                   month_label     = %s,
+                                   level           = %s
                              WHERE LOWER(TRIM(tiktok_id)) = %s
                             """,
-                            (date_val, month_label, row["_uid_norm"]),
+                            (date_val, month_label, level_val, row["_uid_norm"]),
                         )
                         updated += 1
                 conn.commit()
@@ -173,7 +181,7 @@ def run_onboarding_importer():
                 key="dl_unmatched",
             )
             with st.expander("Preview unmatched IDs"):
-                st.dataframe(unmatched_rows[["Unique ID", "Date joined"]], use_container_width=True)
+                st.dataframe(unmatched_rows[["Unique ID", "Collaboration start time", "Sales level"]], use_container_width=True)
 
 
 # ── CREATOR REGISTRY IMPORTER ─────────────────────────────────────────────────

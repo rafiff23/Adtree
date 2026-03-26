@@ -117,7 +117,7 @@ def get_agency_id_by_name(agency_name: str):
 # =====================================================
 
 def insert_creator_registry_row(
-    agency_name,
+    agency_id,
     tiktok_id,
     followers,
     full_name,
@@ -128,30 +128,11 @@ def insert_creator_registry_row(
     binding_status,
     onboarding_date,
     month_label,
-    notes,
-    level,  # ✅ NEW
+    level=None,
 ):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # -------------------------------------------------
-            # Resolve agency_name -> agency_id
-            # -------------------------------------------------
-            cur.execute(
-                """
-                SELECT id
-                FROM public.agency_map
-                WHERE agency_name = %s
-                LIMIT 1
-                """,
-                (agency_name,),
-            )
-            row = cur.fetchone()
-            agency_id = row["id"] if row else None
-
-            # -------------------------------------------------
-            # Insert creator
-            # -------------------------------------------------
             cur.execute(
                 """
                 INSERT INTO public.creator_registry (
@@ -182,7 +163,7 @@ def insert_creator_registry_row(
                     %(binding_status)s,
                     %(onboarding_date)s,
                     %(month_label)s,
-                    %(notes)s,
+                    NULL,
                     %(level)s,
                     NOW(),
                     NOW(),
@@ -201,7 +182,6 @@ def insert_creator_registry_row(
                     "binding_status": binding_status,
                     "onboarding_date": onboarding_date,
                     "month_label": month_label,
-                    "notes": notes,
                     "level": level,
                     "agency_id": agency_id,
                 },
@@ -307,30 +287,3 @@ def update_creator_registry_row(row_id, updated_fields):
     finally:
         conn.close()
 
-def bulk_update_content_submissions(updates: list):
-    """
-    Bulk update content_submissions for status_id and reason.
-    
-    Args:
-        updates: List of dicts, each with keys: id, status_id, reason
-        Example: [{"id": 10, "status_id": 2, "reason": "Pending review"}]
-    """
-    if not updates:
-        return
-    
-    conn = get_connection()
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                for update in updates:
-                    cur.execute(
-                        """
-                        UPDATE public.content_submissions
-                        SET status_id = %(status_id)s,
-                            reason = %(reason)s
-                        WHERE id = %(id)s
-                        """,
-                        update
-                    )
-    finally:
-        conn.close()
