@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import psycopg2
@@ -127,29 +128,40 @@ def run_onboarding_importer():
                 conn = get_connection()
                 with conn.cursor() as cur:
                     for _, row in matched_rows.iterrows():
+                        raw_level = row.get("Sales level", "")
+                        level_val = None
+                        if pd.notna(raw_level) and str(raw_level).strip() != "":
+                            m = re.search(r"\d+", str(raw_level))
+                            if m:
+                                level_val = int(m.group())
+
                         if pd.isna(row["_date_raw"]):
                             skipped_bad_date += 1
-                            continue
-                        date_val    = row["_date_raw"].date()
-                        month_label = row["_date_raw"].strftime("%B %Y")
-                        raw_level   = row.get("Sales level", "")
-                        level_val   = None
-                        if pd.notna(raw_level) and str(raw_level).strip() != "":
-                            try:
-                                level_val = int(float(str(raw_level).strip()))
-                            except ValueError:
-                                pass
-                        cur.execute(
-                            """
-                            UPDATE public.creator_registry
-                               SET onboarding_date = %s,
-                                   month_label     = %s,
-                                   level           = %s
-                             WHERE LOWER(TRIM(tiktok_id)) = %s
-                            """,
-                            (date_val, month_label, level_val, row["_uid_norm"]),
-                        )
-                        updated += 1
+                            # Still mark as Bound and update level
+                            cur.execute(
+                                """
+                                UPDATE public.creator_registry
+                                   SET binding_status = 'Bound',
+                                       level          = %s
+                                 WHERE LOWER(TRIM(tiktok_id)) = %s
+                                """,
+                                (level_val, row["_uid_norm"]),
+                            )
+                        else:
+                            date_val    = row["_date_raw"].date()
+                            month_label = row["_date_raw"].strftime("%B %Y")
+                            cur.execute(
+                                """
+                                UPDATE public.creator_registry
+                                   SET onboarding_date = %s,
+                                       month_label     = %s,
+                                       level           = %s,
+                                       binding_status  = 'Bound'
+                                 WHERE LOWER(TRIM(tiktok_id)) = %s
+                                """,
+                                (date_val, month_label, level_val, row["_uid_norm"]),
+                            )
+                            updated += 1
                 conn.commit()
                 conn.close()
             except Exception as e:
