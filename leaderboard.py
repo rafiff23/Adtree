@@ -91,7 +91,24 @@ FINAL_COLUMNS = [
     "fulfill_amount_usd_weekly",
 ]
 
-SUMMARY_COLUMNS = [c for c in FINAL_COLUMNS if c != "item_id"]
+SUMMARY_COLUMNS = [
+    "industry_source",
+    "author_id",
+    "uniq_id",
+    "poi_id",
+    "total_post",
+    "poi_vv",
+    "ctr",
+    "cvr",
+    "pay_amount_usd",
+    "fulfill_amount_usd",
+    "fulfill_amount_usd_weekly",
+    "order_count",
+    "aov",
+    "report_month",
+    "report_week",
+    "cutoff_date",
+]
 
 # ======================================================
 # HELPERS
@@ -114,14 +131,14 @@ def month_str_to_date(month_str):
 
 def fetch_previous_cumulative(conn, report_month_date, report_week):
     """
-    Fetch previous week's fulfill_amount_usd from the SUMMARY table,
+    Fetch previous week's fulfill_amount_usd from the RAW table,
     keyed by item_url (globally unique per video).
     """
     if report_week == 1:
         return {}
     sql = f"""
         SELECT item_url, fulfill_amount_usd
-        FROM {SCHEMA_NAME}.{TABLE_SUMMARY}
+        FROM {SCHEMA_NAME}.{TABLE_RAW}
         WHERE report_month = %s AND report_week = %s
     """
     with conn.cursor() as cur:
@@ -337,8 +354,30 @@ def render():
                 if deleted_summary > 0:
                     st.warning(f"🗑️ Deleted **{deleted_summary}** existing summary rows for {selected_month} Week {selected_week}.")
 
-                # ── Step 6: Insert summary rows ──
-                # final_df is already deduplicated by item_url so it IS the summary
+                # ── Step 6: Aggregate into summary ──
+                final_df["_is_current_month"] = (
+                    pd.to_datetime(final_df["item_create_date"]).dt.to_period("M") ==
+                    pd.to_datetime(cutoff_date).to_period("M")
+                ).astype(int)
+
+                summary_df = final_df.groupby(
+                    ["industry_source", "author_id", "uniq_id", "poi_id"],
+                    as_index=False
+                ).agg(
+                    total_post=("_is_current_month", "sum"),
+                    poi_vv=("poi_vv", "sum"),
+                    ctr=("ctr", "mean"),
+                    cvr=("cvr", "mean"),
+                    pay_amount_usd=("pay_amount_usd", "sum"),
+                    fulfill_amount_usd=("fulfill_amount_usd", "sum"),
+                    fulfill_amount_usd_weekly=("fulfill_amount_usd_weekly", "sum"),
+                    order_count=("order_count", "sum"),
+                    aov=("aov", "mean"),
+                )
+                summary_df["report_month"] = report_month_date
+                summary_df["report_week"]  = selected_week
+                summary_df["cutoff_date"]  = cutoff_date
+
                 insert_summary = f"""
                     INSERT INTO {SCHEMA_NAME}.{TABLE_SUMMARY} ({", ".join(SUMMARY_COLUMNS)})
                     VALUES %s
@@ -348,7 +387,7 @@ def render():
                         None if (val is None or (isinstance(val, float) and pd.isna(val))) else val
                         for val in (row[col] for col in SUMMARY_COLUMNS)
                     )
-                    for _, row in final_df.iterrows()
+                    for _, row in summary_df.iterrows()
                 ]
                 with conn.cursor() as cur:
                     execute_values(cur, insert_summary, summary_values)
