@@ -91,6 +91,8 @@ FINAL_COLUMNS = [
     "fulfill_amount_usd_weekly",
 ]
 
+SUMMARY_COLUMNS = [c for c in FINAL_COLUMNS if c != "item_id"]
+
 # ======================================================
 # HELPERS
 # ======================================================
@@ -338,11 +340,18 @@ def render():
                 # ── Step 6: Insert summary rows ──
                 # final_df is already deduplicated by item_url so it IS the summary
                 insert_summary = f"""
-                    INSERT INTO {SCHEMA_NAME}.{TABLE_SUMMARY} ({", ".join(FINAL_COLUMNS)})
+                    INSERT INTO {SCHEMA_NAME}.{TABLE_SUMMARY} ({", ".join(SUMMARY_COLUMNS)})
                     VALUES %s
                 """
+                summary_values = [
+                    tuple(
+                        None if (val is None or (isinstance(val, float) and pd.isna(val))) else val
+                        for val in (row[col] for col in SUMMARY_COLUMNS)
+                    )
+                    for _, row in final_df.iterrows()
+                ]
                 with conn.cursor() as cur:
-                    execute_values(cur, insert_summary, values)
+                    execute_values(cur, insert_summary, summary_values)
 
                 conn.commit()
 
