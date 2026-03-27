@@ -2,7 +2,7 @@ import streamlit as st
 from creator_list import render as creator_list_page
 from content_submission import render as content_submission_page
 from content_qc import render as content_qc_page
-from leaderboard import render as leaderboard_page
+from leaderboard_import import render as leaderboard_page
 from voucherpage import render as voucher_page
 from onboarding import render as onboarding_page
 from settings import render as settings_page

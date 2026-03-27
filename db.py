@@ -67,33 +67,6 @@ def bulk_update_content_submissions(updates: list):
     finally:
         conn.close()
 
-# def bulk_update_content_submissions(updates: list):
-#     """
-#     Bulk update content_submissions for status_id and reason.
-    
-#     Args:
-#         updates: List of dicts, each with keys: id, status_id, reason
-#         Example: [{"id": 10, "status_id": 2, "reason": "Pending review"}]
-#     """
-#     if not updates:
-#         return
-    
-#     conn = get_connection()
-#     try:
-#         with conn:
-#             with conn.cursor() as cur:
-#                 for update in updates:
-#                     cur.execute(
-#                         """
-#                         UPDATE public.content_submissions
-#                         SET status_id = %(status_id)s,
-#                             reason = %(reason)s
-#                         WHERE id = %(id)s
-#                         """,
-#                         update
-#                     )
-#     finally:
-#         conn.close()
 # =====================================================
 # HELPER: GET AGENCY ID FROM agency_map
 # =====================================================
@@ -253,6 +226,36 @@ def fetch_creator_registry(tiktok_id_filter=None, start_date=None, end_date=None
 # =====================================================
 # UPDATE CREATOR ROW
 # =====================================================
+
+def fetch_all_leaderboard_rules() -> list:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM public.leaderboard_rules ORDER BY program_key")
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def upsert_leaderboard_rule(program_key: str, fields: dict):
+    cols   = list(fields.keys())
+    vals   = list(fields.values())
+    set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+    sql = f"""
+        INSERT INTO public.leaderboard_rules (program_key, {", ".join(cols)}, updated_at)
+        VALUES (%s, {placeholders}, NOW())
+        ON CONFLICT (program_key) DO UPDATE
+        SET {set_clause}, updated_at = NOW()
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, [program_key] + vals)
+        conn.commit()
+    finally:
+        conn.close()
+
 
 def update_creator_registry_row(row_id, updated_fields):
     """

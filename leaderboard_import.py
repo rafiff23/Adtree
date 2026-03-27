@@ -1,27 +1,8 @@
 import pandas as pd
 import streamlit as st
-import psycopg2
 from psycopg2.extras import execute_values
 from datetime import date
-
-# ======================================================
-# DATABASE CONFIG
-# ======================================================
-
-DB_USER = "postgres"
-DB_PASSWORD = "4dtr33"
-DB_HOST = "localhost"
-DB_PORT = "5432"
-DB_NAME = "adtree"
-
-def get_connection():
-    return psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME
-    )
+from db import get_connection
 
 # ======================================================
 # CONFIG
@@ -145,7 +126,7 @@ def fetch_previous_cumulative(conn, report_month_date, report_week):
         cur.execute(sql, (report_month_date, report_week - 1))
         rows = cur.fetchall()
     # Cast to float to avoid decimal.Decimal vs float type error
-    return {r[0]: float(r[1] or 0) for r in rows}
+    return {r["item_url"]: float(r["fulfill_amount_usd"] or 0) for r in rows}
 
 
 def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
