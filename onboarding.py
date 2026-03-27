@@ -199,7 +199,7 @@ def run_onboarding_importer():
             st.warning(
                 f"{len(unmatched_rows)} ID(s) not found in DB. "
                 "Download the template below, fill in the missing details, "
-                "then use the **Creator Registry** tab to add them."
+                "then upload it in **Import Unmatched** below."
             )
             unmatched_ids = unmatched_rows["Unique ID"].str.strip().tolist()
             xlsx_bytes    = make_unmatched_template_bytes(unmatched_ids)
@@ -215,6 +215,136 @@ def run_onboarding_importer():
                     unmatched_rows[["Unique ID", "Collaboration start time", "Sales level"]],
                     use_container_width=True,
                 )
+
+    # ── Import Unmatched ──────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### ➕ Import Unmatched Creators")
+    st.caption(
+        "Upload the filled unmatched template. "
+        "The onboarding CSV above is used as a lookup for `followers`, `onboarding_date`, `level`, and `binding_status`."
+    )
+
+    uploaded_unmatched = st.file_uploader(
+        "Upload filled unmatched template", type=["xlsx"], key="unmatched_import_upload"
+    )
+    if not uploaded_unmatched:
+        return
+
+    try:
+        um_df = pd.read_excel(uploaded_unmatched, dtype=str)
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
+        return
+
+    um_missing = set(UNMATCHED_COLUMNS) - set(um_df.columns)
+    if um_missing:
+        st.error(f"Missing columns: {um_missing}. Please use the downloaded unmatched template.")
+        return
+
+    um_df["tiktok_id"] = um_df["tiktok_id"].str.strip()
+    um_df = um_df[um_df["tiktok_id"].notna() & (um_df["tiktok_id"] != "")].copy()
+    um_df["_tid_norm"] = um_df["tiktok_id"].str.lower()
+
+    # Build lookup from onboarding CSV: tiktok_id_norm → onboarding row
+    ob_lookup = df.set_index("_uid_norm")
+
+    st.markdown(f"**Rows ready to insert:** {len(um_df)}")
+    with st.expander("Preview"):
+        st.dataframe(um_df[UNMATCHED_COLUMNS].head(20), use_container_width=True)
+
+    if st.button("▶ Insert Unmatched into DB", key="unmatched_import_run"):
+
+        try:
+            conn = get_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT tiktok_id FROM public.creator_registry")
+                existing = {r["tiktok_id"].strip().lower() for r in cur.fetchall()}
+            conn.close()
+        except Exception as e:
+            st.error(f"DB connection failed: {e}")
+            return
+
+        inserted, skipped_dup, skipped_no_ob = 0, 0, 0
+        errors = []
+
+        def _v(val):
+            return val if (pd.notna(val) and str(val).strip() != "") else None
+
+        try:
+            conn = get_connection()
+            with conn.cursor() as cur:
+                for _, row in um_df.iterrows():
+                    tid_norm = row["_tid_norm"]
+
+                    if tid_norm in existing:
+                        skipped_dup += 1
+                        continue
+
+                    # Look up onboarding data
+                    if tid_norm in ob_lookup.index:
+                        ob_row      = ob_lookup.loc[tid_norm]
+                        date_raw    = ob_row["_date_raw"] if "_date_raw" in ob_row.index else pd.NaT
+                        date_val    = date_raw.date() if pd.notna(date_raw) else None
+                        month_label = date_raw.strftime("%B %Y") if pd.notna(date_raw) else None
+                        level_val   = _parse_level(ob_row.get("Sales level"))
+                        followers_v = _parse_followers(ob_row.get("Followers"))
+                        b_status    = "Bound"
+                    else:
+                        skipped_no_ob += 1
+                        date_val = month_label = level_val = followers_v = None
+                        b_status = "Unbound"
+
+                    tiktok_link = f"https://www.tiktok.com/@{row['tiktok_id']}"
+
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO public.creator_registry
+                                (tiktok_id, followers, full_name, domicile, uid,
+                                 phone_number, tiktok_link, binding_status,
+                                 onboarding_date, month_label, level, agency_id, notes)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            """,
+                            (
+                                row["tiktok_id"],
+                                followers_v,
+                                _v(row.get("full_name")),
+                                _v(row.get("domicile")),
+                                _v(row.get("uid")),
+                                _v(row.get("phone_number")),
+                                tiktok_link,
+                                b_status,
+                                date_val,
+                                month_label,
+                                level_val,
+                                1,
+                                None,
+                            ),
+                        )
+                        inserted += 1
+                    except Exception as row_err:
+                        errors.append(f"Row {row['tiktok_id']}: {row_err}")
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            st.error(f"Insert failed: {e}")
+            return
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("✅ Inserted",        inserted)
+        col2.metric("⏭ Duplicates",      skipped_dup)
+        col3.metric("⚠️ No onboard data", skipped_no_ob)
+        col4.metric("❌ Errors",          len(errors))
+
+        if inserted:
+            st.success(f"{inserted} creator(s) inserted successfully.")
+        if skipped_no_ob:
+            st.info(f"{skipped_no_ob} row(s) inserted without onboarding data — not found in the onboarding CSV.")
+        if errors:
+            with st.expander("Error details"):
+                for err in errors:
+                    st.error(err)
 
 
 # ── CREATOR REGISTRY IMPORTER ─────────────────────────────────────────────────
