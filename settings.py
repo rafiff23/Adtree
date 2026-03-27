@@ -118,7 +118,7 @@ def _render_leaderboard_rules():
     except Exception as e:
         st.error(f"Could not load rules: {e}")
         st.code(
-            "CREATE TABLE IF NOT EXISTS public.leaderboard_rules (\n"
+            "CREATE TABLE IF NOT EXISTS leaderboard.leaderboard_rules (\n"
             "    program_key   VARCHAR(50) PRIMARY KEY,\n"
             "    min_gmv_idr   BIGINT      NOT NULL DEFAULT 0,\n"
             "    min_videos    INT         NOT NULL DEFAULT 0,\n"
