@@ -117,22 +117,6 @@ def _render_leaderboard_rules():
         existing = {r["program_key"]: dict(r) for r in fetch_all_leaderboard_rules()}
     except Exception as e:
         st.error(f"Could not load rules: {e}")
-        st.code(
-            "CREATE TABLE IF NOT EXISTS leaderboard.leaderboard_rules (\n"
-            "    program_key   VARCHAR(50) PRIMARY KEY,\n"
-            "    min_gmv_idr   BIGINT      NOT NULL DEFAULT 0,\n"
-            "    min_videos    INT         NOT NULL DEFAULT 0,\n"
-            "    min_merchants INT         NOT NULL DEFAULT 0,\n"
-            "    max_slots     INT         NOT NULL DEFAULT 10,\n"
-            "    prize_idr     INT         NOT NULL DEFAULT 0,\n"
-            "    prize_label   VARCHAR(200),\n"
-            "    title_full    VARCHAR(200),\n"
-            "    title_main    VARCHAR(100),\n"
-            "    title_accent  VARCHAR(100),\n"
-            "    updated_at    TIMESTAMP   DEFAULT NOW()\n"
-            ");",
-            language="sql",
-        )
         return
 
     selected_program = st.selectbox("Program", _ALL_PROGRAMS, format_func=lambda k: k.replace("_", " ").title())

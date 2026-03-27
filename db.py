@@ -231,7 +231,7 @@ def fetch_all_leaderboard_rules() -> list:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM public.leaderboard_rules ORDER BY program_key")
+            cur.execute("SELECT * FROM leaderboard.leaderboard_rules ORDER BY program_key")
             return cur.fetchall()
     finally:
         conn.close()
@@ -243,7 +243,7 @@ def upsert_leaderboard_rule(program_key: str, fields: dict):
     set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
     placeholders = ", ".join(["%s"] * len(cols))
     sql = f"""
-        INSERT INTO public.leaderboard_rules (program_key, {", ".join(cols)}, updated_at)
+        INSERT INTO leaderboard.leaderboard_rules (program_key, {", ".join(cols)}, updated_at)
         VALUES (%s, {placeholders}, NOW())
         ON CONFLICT (program_key) DO UPDATE
         SET {set_clause}, updated_at = NOW()
