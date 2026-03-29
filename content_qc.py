@@ -157,14 +157,34 @@ def _render_qc_tab(username: str):
         st.info("No posts match the current filter.")
         return
 
-    st.caption(f"Showing **{len(df):,}** posts — edit QC Status cells directly, then save.")
+    total = len(df)
+
+    # ── Row range ─────────────────────────────────────────────────────────────
+    r1, r2 = st.columns(2)
+    with r1:
+        row_from = st.number_input(
+            "From row", min_value=1, max_value=total, value=1, step=1, key="cqc_row_from"
+        )
+    with r2:
+        row_to = st.number_input(
+            "To row", min_value=1, max_value=total, value=total, step=1, key="cqc_row_to"
+        )
+
+    row_from = int(row_from)
+    row_to   = int(max(row_from, row_to))
+    df = df.iloc[row_from - 1 : row_to]
+
+    st.caption(
+        f"Showing rows **{row_from}–{row_from + len(df) - 1}** of **{total:,}** total"
+        " — edit QC Status cells directly, then save."
+    )
 
     # ── Editable table ────────────────────────────────────────────────────────
     display_cols = [
         "post_url", "post_id", "post_title", "post_date",
         "creator_name", "creator_level",
         "video_views", "ctr", "cvr", "like_rate", "comment_rate",
-        "qc_status", "qc_updated_by", "locked_by",
+        "qc_status", "qc_updated_by",
     ]
     display_cols = [c for c in display_cols if c in df.columns]
 
@@ -186,7 +206,6 @@ def _render_qc_tab(username: str):
                                  "QC Status", options=["Good", "Bad"], required=False
                              ),
             "qc_updated_by": st.column_config.TextColumn("Updated By", disabled=True),
-            "locked_by":     st.column_config.TextColumn("🔒 Lock", disabled=True),
         },
         use_container_width=True,
         height=520,
@@ -211,14 +230,8 @@ def _render_qc_tab(username: str):
         for i in changed_idx:
             post_id   = df.iloc[i]["post_id"]
             new_val   = edited_df.iloc[i]["qc_status"]
-            new_val   = None if pd.isna(new_val) or new_val == "" else new_val
-            locked_by = df.iloc[i].get("locked_by")
-
-            if pd.notna(locked_by) and locked_by and locked_by != username:
-                conflicts.append(f"{post_id} (locked by {locked_by})")
-                continue
-
-            original  = st.session_state["cqc_original_qc"].get(post_id, {})
+            new_val  = None if pd.isna(new_val) or new_val == "" else new_val
+            original = st.session_state["cqc_original_qc"].get(post_id, {})
             expected_at = original.get("qc_updated_at")
 
             ok, msg = save_content_qc_status(post_id, new_val, username, expected_at)
@@ -232,7 +245,10 @@ def _render_qc_tab(username: str):
         if saved:
             st.success(f"✅ {saved} row(s) saved.")
         if conflicts:
-            st.warning(f"⚠️ {len(conflicts)} skipped (conflict or locked): {conflicts}")
+            st.warning(
+                f"⚠️ {len(conflicts)} row(s) were already updated by someone else "
+                f"while you were editing — your change was not applied: {conflicts}"
+            )
         if errors:
             st.error(f"Errors: {errors}")
 
