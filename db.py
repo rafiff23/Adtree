@@ -333,8 +333,9 @@ CSV_TO_DB = {
     "merchant_name":          "merchant_name",
     "creator_name":           "creator_name",
     "creator_id":             "creator_id",
-    "creator_bindi":          "creator_binding",
-    "creator_binding":        "creator_binding",
+    "creator_bindi":                 "creator_binding",
+    "creator_binding":               "creator_binding",
+    "creator_binding_status":        "creator_binding",
     "creator_city":           "creator_city",
     "creator_level":          "creator_level",
     "sales_value":            "sales_value",
@@ -485,7 +486,7 @@ def fetch_content_qc_posts(qc_filter=None, date_from=None, date_to=None, search=
 
     sql = f"""
         SELECT
-            p.post_id, p.post_title, p.post_date,
+            p.post_id, p.creator_id, p.post_title, p.post_date,
             p.creator_name, p.creator_level, p.location_city, p.task_type,
             p.video_views, p.like_rate, p.comment_rate, p.ctr, p.cvr,
             p.qc_status, p.qc_updated_by, p.qc_updated_at,
