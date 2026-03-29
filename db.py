@@ -290,3 +290,332 @@ def update_creator_registry_row(row_id, updated_fields):
     finally:
         conn.close()
 
+
+# =====================================================
+# CONTENT QC
+# =====================================================
+
+import re as _re
+import pandas as _pd
+
+_LOCK_TIMEOUT_MIN = 10
+
+_METRIC_COLS = [
+    "creator_level", "sales_value", "orders", "redemption_amount",
+    "redeemed_orders", "video_views", "ctr", "cvr", "aov",
+    "video_completion_rate", "like_rate", "comment_rate",
+]
+
+_ALL_DATA_COLS = [
+    "post_id",
+    "location_industry", "post_type", "creator_type", "post_title",
+    "post_date", "duration", "task_type", "location_id", "location_name",
+    "location_city", "merchant_name", "creator_name", "creator_id",
+    "creator_binding", "creator_city",
+] + _METRIC_COLS
+
+# Maps normalised CSV header → DB column name
+CSV_TO_DB = {
+    "location_indu":          "location_industry",
+    "location_industry":      "location_industry",
+    "post_type":              "post_type",
+    "creator_type":           "creator_type",
+    "post_id":                "post_id",
+    "post_title":             "post_title",
+    "post_date":              "post_date",
+    "duration":               "duration",
+    "task_type":              "task_type",
+    "location_id":            "location_id",
+    "location_nam":           "location_name",
+    "location_name":          "location_name",
+    "location_city":          "location_city",
+    "merchant_nan":           "merchant_name",
+    "merchant_name":          "merchant_name",
+    "creator_name":           "creator_name",
+    "creator_id":             "creator_id",
+    "creator_bindi":          "creator_binding",
+    "creator_binding":        "creator_binding",
+    "creator_city":           "creator_city",
+    "creator_level":          "creator_level",
+    "sales_value":            "sales_value",
+    "orders":                 "orders",
+    "redemption_a":           "redemption_amount",
+    "redemption_amount":      "redemption_amount",
+    "redeemed_ord":           "redeemed_orders",
+    "redeemed_orders":        "redeemed_orders",
+    "video_views":            "video_views",
+    "ctr":                    "ctr",
+    "cvr":                    "cvr",
+    "aov":                    "aov",
+    "video_comple":           "video_completion_rate",
+    "video_completion_rate":  "video_completion_rate",
+    "like_rate":              "like_rate",
+    "comment_rate":           "comment_rate",
+}
+
+
+def _norm_col(col: str) -> str:
+    return col.lower().strip().replace(" ", "_").replace("-", "_")
+
+
+def parse_post_date(val) -> str | None:
+    s = str(val).strip()
+    if _re.match(r"^\d{8}$", s):
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    try:
+        return _pd.to_datetime(s).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def parse_creator_level(val) -> int | None:
+    if _pd.isna(val) or str(val).strip() == "":
+        return None
+    m = _re.search(r"\d+", str(val))
+    return int(m.group()) if m else None
+
+
+def prepare_content_qc_csv(df_raw: _pd.DataFrame) -> tuple:
+    """
+    Normalise CSV column names, parse dates and creator levels, coerce numerics.
+    Returns (df_clean, unmapped_columns).
+    """
+    rename = {}
+    unmapped = []
+    for col in df_raw.columns:
+        norm = _norm_col(col)
+        if norm in CSV_TO_DB:
+            rename[col] = CSV_TO_DB[norm]
+        else:
+            unmapped.append(col)
+
+    df = df_raw.rename(columns=rename)
+    known = set(CSV_TO_DB.values())
+    df = df[[c for c in df.columns if c in known]].copy()
+
+    if "post_date" in df.columns:
+        df["post_date"] = df["post_date"].apply(parse_post_date)
+
+    if "creator_level" in df.columns:
+        df["creator_level"] = df["creator_level"].apply(parse_creator_level)
+
+    num_cols = [c for c in _METRIC_COLS if c in df.columns and c != "creator_level"]
+    for col in num_cols:
+        df[col] = _pd.to_numeric(
+            df[col].astype(str).str.replace(",", "").str.replace("%", "").str.strip(),
+            errors="coerce",
+        )
+
+    return df, unmapped
+
+
+def upsert_content_qc_posts(rows: list) -> tuple:
+    """
+    Upsert posts: insert new rows, update only metric columns on conflict.
+    Returns (inserted_count, updated_count).
+    """
+    if not rows:
+        return 0, 0
+
+    cols = [c for c in _ALL_DATA_COLS if c in rows[0]]
+    metrics_present = [c for c in _METRIC_COLS if c in cols]
+
+    col_list = ", ".join(cols)
+    placeholders = ", ".join([f"%({c})s" for c in cols])
+
+    if metrics_present:
+        update_set = ", ".join(f"{c} = EXCLUDED.{c}" for c in metrics_present)
+        update_set += ", metrics_updated_at = NOW()"
+    else:
+        update_set = "metrics_updated_at = NOW()"
+
+    sql = f"""
+        INSERT INTO public.content_qc_posts ({col_list}, imported_at, metrics_updated_at)
+        VALUES ({placeholders}, NOW(), NOW())
+        ON CONFLICT (post_id) DO UPDATE
+            SET {update_set}
+        RETURNING (xmax = 0) AS is_insert
+    """
+
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                inserted = updated = 0
+                for row in rows:
+                    clean = {
+                        k: (None if isinstance(v, float) and _pd.isna(v) else v)
+                        for k, v in row.items() if k in cols
+                    }
+                    cur.execute(sql, clean)
+                    result = cur.fetchone()
+                    if result and result["is_insert"]:
+                        inserted += 1
+                    else:
+                        updated += 1
+        return inserted, updated
+    finally:
+        conn.close()
+
+
+def fetch_content_qc_posts(qc_filter=None, date_from=None, date_to=None, search=None) -> list:
+    """Fetch posts joined with active lock info."""
+    conditions = ["1=1"]
+    params: dict = {}
+
+    if qc_filter == "Unreviewed":
+        conditions.append("p.qc_status IS NULL")
+    elif qc_filter in ("Good", "Bad"):
+        conditions.append("p.qc_status = %(qc_filter)s")
+        params["qc_filter"] = qc_filter
+
+    if date_from:
+        conditions.append("p.post_date >= %(date_from)s")
+        params["date_from"] = date_from
+    if date_to:
+        conditions.append("p.post_date <= %(date_to)s")
+        params["date_to"] = date_to
+    if search:
+        conditions.append(
+            "(p.post_title ILIKE %(search)s "
+            " OR p.creator_name ILIKE %(search)s "
+            " OR p.post_id ILIKE %(search)s)"
+        )
+        params["search"] = f"%{search}%"
+
+    sql = f"""
+        SELECT
+            p.post_id, p.post_title, p.post_date,
+            p.creator_name, p.creator_level, p.location_city, p.task_type,
+            p.video_views, p.like_rate, p.comment_rate, p.ctr, p.cvr,
+            p.qc_status, p.qc_updated_by, p.qc_updated_at,
+            p.metrics_updated_at,
+            l.locked_by,
+            l.locked_at
+        FROM public.content_qc_posts p
+        LEFT JOIN public.content_qc_locks l
+            ON p.post_id = l.post_id
+           AND l.locked_at > NOW() - INTERVAL '{_LOCK_TIMEOUT_MIN} minutes'
+        WHERE {" AND ".join(conditions)}
+        ORDER BY p.post_date DESC, p.post_id
+        LIMIT 1000
+    """
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_content_qc_post_state(post_id: str) -> dict | None:
+    """Return qc_status + qc_updated_at for a single post (conflict detection)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT qc_status, qc_updated_at, qc_updated_by "
+                "FROM public.content_qc_posts WHERE post_id = %s",
+                (post_id,),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def acquire_content_qc_lock(post_id: str, username: str) -> tuple:
+    """
+    Try to acquire (or refresh) the edit lock for post_id.
+    Returns (success: bool, message: str).
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # 1. Remove stale locks
+                cur.execute(
+                    "DELETE FROM public.content_qc_locks "
+                    "WHERE post_id = %s AND locked_at < NOW() - INTERVAL %s",
+                    (post_id, f"{_LOCK_TIMEOUT_MIN} minutes"),
+                )
+                # 2. Insert our lock; refresh timestamp only if we already own it
+                cur.execute(
+                    """
+                    INSERT INTO public.content_qc_locks (post_id, locked_by, locked_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (post_id) DO UPDATE
+                        SET locked_at = NOW()
+                        WHERE public.content_qc_locks.locked_by = EXCLUDED.locked_by
+                    """,
+                    (post_id, username),
+                )
+                # 3. Check who holds the lock
+                cur.execute(
+                    "SELECT locked_by FROM public.content_qc_locks WHERE post_id = %s",
+                    (post_id,),
+                )
+                row = cur.fetchone()
+
+        if row and row["locked_by"] == username:
+            return True, "ok"
+        elif row:
+            return False, f"Sedang diedit oleh **{row['locked_by']}**"
+        else:
+            return False, "Tidak dapat mengambil lock, coba lagi."
+    finally:
+        conn.close()
+
+
+def release_content_qc_lock(post_id: str, username: str):
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM public.content_qc_locks "
+                    "WHERE post_id = %s AND locked_by = %s",
+                    (post_id, username),
+                )
+    finally:
+        conn.close()
+
+
+def save_content_qc_status(post_id: str, qc_status, username: str, expected_updated_at) -> tuple:
+    """
+    Save qc_status with optimistic conflict detection.
+    Returns (success: bool, message: str).
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT qc_updated_at, qc_updated_by "
+                    "FROM public.content_qc_posts WHERE post_id = %s",
+                    (post_id,),
+                )
+                current = cur.fetchone()
+                if not current:
+                    return False, "Post tidak ditemukan."
+
+                if current["qc_updated_at"] != expected_updated_at:
+                    who = current["qc_updated_by"] or "seseorang"
+                    return False, (
+                        f"Conflict: post ini sudah diupdate oleh **{who}** "
+                        "selama kamu mengedit. Refresh dan coba lagi."
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE public.content_qc_posts
+                    SET qc_status = %s, qc_updated_by = %s, qc_updated_at = NOW()
+                    WHERE post_id = %s
+                    """,
+                    (qc_status or None, username, post_id),
+                )
+        return True, "ok"
+    finally:
+        conn.close()
