@@ -562,9 +562,9 @@ def acquire_content_qc_lock(post_id: str, username: str) -> tuple:
         if row and row["locked_by"] == username:
             return True, "ok"
         elif row:
-            return False, f"Sedang diedit oleh **{row['locked_by']}**"
+            return False, f"Currently being edited by **{row['locked_by']}**"
         else:
-            return False, "Tidak dapat mengambil lock, coba lagi."
+            return False, "Could not acquire lock, please try again."
     finally:
         conn.close()
 
@@ -599,13 +599,13 @@ def save_content_qc_status(post_id: str, qc_status, username: str, expected_upda
                 )
                 current = cur.fetchone()
                 if not current:
-                    return False, "Post tidak ditemukan."
+                    return False, "Post not found."
 
                 if current["qc_updated_at"] != expected_updated_at:
                     who = current["qc_updated_by"] or "seseorang"
                     return False, (
-                        f"Conflict: post ini sudah diupdate oleh **{who}** "
-                        "selama kamu mengedit. Refresh dan coba lagi."
+                        f"Conflict: this post was already updated by **{who}** "
+                        "while you were editing. Refresh and try again."
                     )
 
                 cur.execute(
