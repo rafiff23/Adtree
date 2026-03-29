@@ -49,7 +49,7 @@ def _render_import_tab():
         return
 
     try:
-        df_raw = pd.read_excel(uploaded, dtype=str)
+        df_raw = pd.read_excel(uploaded, sheet_name="Data", dtype=str)
     except Exception as e:
         st.error(f"Failed to read file: {e}")
         return
