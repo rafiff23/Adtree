@@ -466,7 +466,7 @@ def fetch_content_qc_posts(qc_filter=None, date_from=None, date_to=None, search=
 
     if qc_filter == "Unreviewed":
         conditions.append("p.qc_status IS NULL")
-    elif qc_filter in ("Good", "Bad"):
+    elif qc_filter:
         conditions.append("p.qc_status = %(qc_filter)s")
         params["qc_filter"] = qc_filter
 
@@ -618,5 +618,39 @@ def save_content_qc_status(post_id: str, qc_status, username: str, expected_upda
                     (qc_status or None, username, post_id),
                 )
         return True, "ok"
+    finally:
+        conn.close()
+
+
+def fetch_qc_status_options() -> list:
+    """Return all QC status labels ordered by sort_order."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT label FROM public.qc_status_options ORDER BY sort_order, label"
+            )
+            return [row["label"] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def add_qc_status_option(label: str) -> tuple:
+    """Insert a new QC status label. Returns (success, message)."""
+    label = label.strip()
+    if not label:
+        return False, "Label cannot be empty."
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO public.qc_status_options (label) VALUES (%s) "
+                    "ON CONFLICT (label) DO NOTHING",
+                    (label,),
+                )
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
     finally:
         conn.close()

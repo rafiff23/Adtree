@@ -12,6 +12,8 @@ from db import (
     upsert_content_qc_posts,
     fetch_content_qc_posts,
     save_content_qc_status,
+    fetch_qc_status_options,
+    add_qc_status_option,
 )
 
 
@@ -123,12 +125,40 @@ def _load_qc_data(qc_filter, date_from, date_to, search):
         st.session_state["cqc_original_qc"] = {}
 
 
+def _load_status_options() -> list:
+    """Fetch QC status options from DB, cached in session state."""
+    if "cqc_status_options" not in st.session_state:
+        try:
+            st.session_state["cqc_status_options"] = fetch_qc_status_options()
+        except Exception:
+            st.session_state["cqc_status_options"] = ["Good", "Bad"]
+    return st.session_state["cqc_status_options"]
+
+
 def _render_qc_tab(username: str):
+    status_options = _load_status_options()
+
+    # ── Manage Statuses expander ───────────────────────────────────────────────
+    with st.expander("⚙️ Manage QC Statuses"):
+        st.caption(f"Current statuses: {', '.join(status_options)}")
+        new_label = st.text_input("New status label", key="cqc_new_status_input")
+        if st.button("Add Status", key="cqc_add_status_btn"):
+            if new_label.strip():
+                ok, msg = add_qc_status_option(new_label)
+                if ok:
+                    st.session_state.pop("cqc_status_options", None)
+                    st.success(f"'{new_label.strip()}' added.")
+                    st.rerun()
+                else:
+                    st.error(f"Failed: {msg}")
+            else:
+                st.warning("Please enter a label.")
+
     # ── Filters ───────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         qc_filter = st.selectbox(
-            "QC Status", ["All", "Unreviewed", "Good", "Bad"], key="cqc_qc_filter"
+            "QC Status", ["All", "Unreviewed"] + status_options, key="cqc_qc_filter"
         )
     with c2:
         date_from = st.date_input("From Date", value=None, key="cqc_date_from")
@@ -203,7 +233,7 @@ def _render_qc_tab(username: str):
             "like_rate":     st.column_config.NumberColumn("Like Rate", disabled=True, format="%.2f%%"),
             "comment_rate":  st.column_config.NumberColumn("Comment Rate", disabled=True, format="%.2f%%"),
             "qc_status":     st.column_config.SelectboxColumn(
-                                 "QC Status", options=["Good", "Bad"], required=False
+                                 "QC Status", options=status_options, required=False
                              ),
             "qc_updated_by": st.column_config.TextColumn("Updated By", disabled=True),
         },
