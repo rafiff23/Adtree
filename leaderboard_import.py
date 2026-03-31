@@ -12,11 +12,7 @@ SCHEMA_NAME   = "leaderboard"
 TABLE_RAW     = "tiktok_go_video_transactions"
 TABLE_SUMMARY = "tiktok_go_video_summary"
 
-SHEETS = {
-    "Accommodation  video transactio": "accommodation",
-    "Attraction video transaction pe": "attraction",
-    "FnB  video transaction performa": "fnb"
-}
+INDUSTRY_OPTIONS = ["accommodation", "attraction", "fnb"]
 
 NUMERIC_COLS = [
     "author_actual_sales_power",
@@ -164,60 +160,50 @@ def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
     return deduped.reset_index(drop=True)
 
 
-def load_and_transform_xlsx(uploaded_file):
-    xls = pd.ExcelFile(uploaded_file)
-    all_data = []
+def load_and_transform_csv(uploaded_file, industry_name):
+    df = pd.read_csv(uploaded_file, dtype={"(primary key)item_id": str})
 
-    for sheet_name, industry_name in SHEETS.items():
-        if sheet_name not in xls.sheet_names:
-            st.error(f"❌ Sheet '{sheet_name}' not found in uploaded file.")
-            st.stop()
+    # ---- Column rename ----
+    if industry_name in ["accommodation", "attraction"]:
+        df = df.rename(columns={
+            "(primary key)item_id":                     "item_id",
+            "item URL":                                  "item_url",
+            "alliance_open_loop_pay_amount_dollar":      "pay_amount_usd",
+            "alliance_open_loop_fulfill_amount_dollar":  "fulfill_amount_usd",
+            "alliance_open_loop_pay_order_cnt":          "order_count",
+            "AOV": "aov", "CTR": "ctr", "CVR": "cvr"
+        })
+        df["close_loop_merchant_name"] = None
 
-        df = pd.read_excel(xls, sheet_name=sheet_name, dtype={"(primary key)item_id": str})
+    elif industry_name == "fnb":
+        df = df.rename(columns={
+            "(primary key)item_id":                          "item_id",
+            "item URL":                                       "item_url",
+            "alliance_close_loop_pay_pay_amount_dollar":     "pay_amount_usd",
+            "alliance_close_loop_fulfill_pay_amount_dollar": "fulfill_amount_usd",
+            "alliance_close_loop_pay_shop_order_cnt":        "order_count",
+            "Pay AOV":                                        "aov",
+            "Close Loop CVR - Supply POI Content Source":     "cvr",
+            "CTR":                                            "ctr",
+            "close_loop_has_service_merchant_names":          "close_loop_merchant_name"
+        })
 
-        # ---- Column rename ----
-        if industry_name in ["accommodation", "attraction"]:
-            df = df.rename(columns={
-                "(primary key)item_id":                     "item_id",
-                "item URL":                                  "item_url",
-                "alliance_open_loop_pay_amount_dollar":      "pay_amount_usd",
-                "alliance_open_loop_fulfill_amount_dollar":  "fulfill_amount_usd",
-                "alliance_open_loop_pay_order_cnt":          "order_count",
-                "AOV": "aov", "CTR": "ctr", "CVR": "cvr"
-            })
-            df["close_loop_merchant_name"] = None
+    df["industry_source"] = industry_name
 
-        elif industry_name == "fnb":
-            df = df.rename(columns={
-                "(primary key)item_id":                          "item_id",
-                "item URL":                                       "item_url",
-                "alliance_close_loop_pay_pay_amount_dollar":     "pay_amount_usd",
-                "alliance_close_loop_fulfill_pay_amount_dollar": "fulfill_amount_usd",
-                "alliance_close_loop_pay_shop_order_cnt":        "order_count",
-                "Pay AOV":                                        "aov",
-                "Close Loop CVR - Supply POI Content Source":     "cvr",
-                "CTR":                                            "ctr",
-                "close_loop_has_service_merchant_names":          "close_loop_merchant_name"
-            })
+    # ---- Clean numerics ----
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        df["industry_source"] = industry_name
+    # ---- Ensure all columns exist ----
+    for col in META_COLS + ["item_id"]:
+        if col not in df.columns:
+            df[col] = None
 
-        # ---- Clean numerics ----
-        for col in NUMERIC_COLS:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+    # ---- Deduplicate by item_url ----
+    df = deduplicate_df(df)
 
-        # ---- Ensure all columns exist ----
-        for col in META_COLS + ["item_id"]:
-            if col not in df.columns:
-                df[col] = None
-
-        # ---- Deduplicate by item_url within this sheet ----
-        df = deduplicate_df(df)
-
-        all_data.append(df)
-
-    return pd.concat(all_data, ignore_index=True)
+    return df
 
 
 # ======================================================
@@ -246,12 +232,14 @@ def render():
 
     st.info(f"📌 Importing: **{selected_month}** · **Week {selected_week}** · Cutoff **{cutoff_date}**")
 
-    uploaded_file = st.file_uploader("Upload XLSX File", type=["xlsx"])
+    selected_industry = st.selectbox("Industry Source", INDUSTRY_OPTIONS)
+
+    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if not uploaded_file:
         return
 
     try:
-        final_df = load_and_transform_xlsx(uploaded_file)
+        final_df = load_and_transform_csv(uploaded_file, selected_industry)
 
         # ---- Attach metadata ----
         final_df["report_month"]              = report_month_date
