@@ -5,6 +5,42 @@ from db import get_connection, fetch_all_leaderboard_rules, upsert_leaderboard_r
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def fetch_banners():
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, image_url, sort_order FROM leaderboard.banners ORDER BY sort_order, id"
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def insert_banner(image_url: str, sort_order: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO leaderboard.banners (image_url, sort_order) VALUES (%s, %s) RETURNING id",
+                (image_url, sort_order),
+            )
+            new_id = cur.fetchone()["id"]
+        conn.commit()
+        return new_id
+    finally:
+        conn.close()
+
+
+def delete_banner(banner_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM leaderboard.banners WHERE id = %s", (banner_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
 def fetch_agencies():
     conn = get_connection()
     try:
@@ -168,16 +204,63 @@ def _render_leaderboard_rules():
                          use_container_width=True)
 
 
+def _render_banner_section():
+    st.markdown("### Banner Images")
+    st.caption("Images are loaded from URLs stored in the database. Displayed 2 per row on the Home page.")
+
+    banners = fetch_banners()
+
+    if banners:
+        for b in banners:
+            col_img, col_url, col_del = st.columns([1, 4, 1])
+            with col_img:
+                st.image(b["image_url"], width=120)
+            with col_url:
+                st.markdown(f"**Sort:** {b['sort_order']}")
+                st.caption(b["image_url"])
+            with col_del:
+                st.write("")
+                if st.button("🗑️ Delete", key=f"del_banner_{b['id']}"):
+                    try:
+                        delete_banner(b["id"])
+                        st.success("Banner deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to delete: {e}")
+    else:
+        st.info("No banners yet. Add one below.")
+
+    st.divider()
+    st.markdown("#### Add New Banner")
+    with st.form("add_banner_form", clear_on_submit=True):
+        new_url = st.text_input("Image URL", placeholder="https://example.com/banner.jpg")
+        new_order = st.number_input("Sort Order", value=0, step=1, help="Lower number = shown first")
+        submitted = st.form_submit_button("Add Banner")
+        if submitted:
+            if not new_url.strip():
+                st.error("Image URL cannot be empty.")
+            else:
+                try:
+                    new_id = insert_banner(new_url.strip(), int(new_order))
+                    st.success(f"Banner added with ID {new_id}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to add banner: {e}")
+
+
 def render():
     st.title("⚙️ Settings")
 
-    tab_agency, tab_rules = st.tabs(["Agency / Vendor List", "Leaderboard Rules"])
+    tab_agency, tab_rules, tab_banners = st.tabs(["Agency / Vendor List", "Leaderboard Rules", "Banners"])
 
     with tab_agency:
         _render_agency_section_body()
 
     with tab_rules:
         _render_leaderboard_rules()
+
+    with tab_banners:
+        _render_banner_section()
 
 
 if __name__ == "__main__":
