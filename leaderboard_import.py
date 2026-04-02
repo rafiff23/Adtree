@@ -64,6 +64,7 @@ FINAL_COLUMNS = [
     "poi_item_publish_cnt_db",
     "report_month",
     "report_week",
+    "start_date",
     "cutoff_date",
     "fulfill_amount_usd_weekly",
 ]
@@ -84,6 +85,7 @@ SUMMARY_COLUMNS = [
     "aov",
     "report_month",
     "report_week",
+    "start_date",
     "cutoff_date",
 ]
 
@@ -214,7 +216,7 @@ def render():
     st.title("📊 TikTok Go Video Transaction Importer")
 
     st.subheader("Import Settings")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         month_options = generate_month_options()
@@ -226,11 +228,14 @@ def render():
         selected_week = st.selectbox("Week", [1, 2, 3, 4, 5])
 
     with col3:
+        start_date = st.date_input("Start Date", value=date.today().replace(day=1))
+
+    with col4:
         cutoff_date = st.date_input("Cutoff Date", value=date.today())
 
     report_month_date = month_str_to_date(selected_month)
 
-    st.info(f"📌 Importing: **{selected_month}** · **Week {selected_week}** · Cutoff **{cutoff_date}**")
+    st.info(f"📌 Importing: **{selected_month}** · **Week {selected_week}** · **{start_date}** → **{cutoff_date}**")
 
     selected_industry = st.selectbox("Industry Source", INDUSTRY_OPTIONS)
 
@@ -244,6 +249,7 @@ def render():
         # ---- Attach metadata ----
         final_df["report_month"]              = report_month_date
         final_df["report_week"]               = selected_week
+        final_df["start_date"]                = start_date
         final_df["cutoff_date"]               = cutoff_date
         final_df["item_create_date"]          = cutoff_date
         final_df["fulfill_amount_usd_weekly"] = None
@@ -324,16 +330,17 @@ def render():
                     st.warning(f"🗑️ Deleted **{deleted_summary}** existing summary rows for {selected_month} Week {selected_week}.")
 
                 # ── Step 6: Aggregate into summary ──
-                final_df["_is_current_month"] = (
-                    pd.to_datetime(final_df["item_create_date"]).dt.to_period("M") ==
-                    pd.to_datetime(cutoff_date).to_period("M")
+                item_dates = pd.to_datetime(final_df["item_create_date"])
+                final_df["_in_date_range"] = (
+                    (item_dates >= pd.to_datetime(start_date)) &
+                    (item_dates <= pd.to_datetime(cutoff_date))
                 ).astype(int)
 
                 summary_df = final_df.groupby(
                     ["industry_source", "author_id", "uniq_id", "poi_id"],
                     as_index=False
                 ).agg(
-                    total_post=("_is_current_month", "sum"),
+                    total_post=("_in_date_range", "sum"),
                     poi_vv=("poi_vv", "sum"),
                     ctr=("ctr", "mean"),
                     cvr=("cvr", "mean"),
@@ -345,6 +352,7 @@ def render():
                 )
                 summary_df["report_month"] = report_month_date
                 summary_df["report_week"]  = selected_week
+                summary_df["start_date"]   = start_date
                 summary_df["cutoff_date"]  = cutoff_date
 
                 insert_summary = f"""
