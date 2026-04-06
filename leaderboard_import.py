@@ -133,7 +133,9 @@ def load_and_transform_csv(uploaded_file) -> pd.DataFrame:
 
     if "item_create_date" in df.columns:
         df["item_create_date"] = pd.to_datetime(
-            df["item_create_date"], errors="coerce"
+            df["item_create_date"].astype(str).str.strip().str[:8],
+            format="%Y%m%d",
+            errors="coerce",
         ).dt.date
 
     for col in NUMERIC_COLS:
