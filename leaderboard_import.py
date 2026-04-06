@@ -125,7 +125,7 @@ def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_and_transform_csv(uploaded_file) -> pd.DataFrame:
-    df = pd.read_csv(uploaded_file, sep=";;;", dtype={"Post ID": str}, engine="python")
+    df = pd.read_excel(uploaded_file, dtype={"Post ID": str})
     df = df.rename(columns=CSV_TO_DB)
 
     if "item_id" in df.columns:
@@ -178,7 +178,7 @@ def render():
     report_month_date = month_str_to_date(selected_month)
     st.info(f"📌 Importing: **{selected_month}** · **Week {selected_week}** · **{start_date}** → **{cutoff_date}**")
 
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
     if not uploaded_file:
         return
 
