@@ -12,82 +12,72 @@ SCHEMA_NAME   = "leaderboard"
 TABLE_RAW     = "tiktok_go_video_transactions"
 TABLE_SUMMARY = "tiktok_go_video_summary"
 
-INDUSTRY_OPTIONS = ["accommodation", "attraction", "fnb"]
+# CSV header → DB column.
+# Adjust keys here if the exact CSV column headers differ.
+CSV_TO_DB = {
+    "Location industry":      "industry_source",
+    "Post type":              "post_type",
+    "Creator type":           "creator_type",
+    "Post ID":                "item_id",
+    "Post title":             "post_title",
+    "Post date":              "item_create_date",
+    "Duration":               "duration",
+    "Task type":              "task_type",
+    "Location ID":            "poi_id",
+    "Location name":          "poi_name_en",
+    "Location city":          "poi_l2_asci_name",
+    "Merchant name":          "close_loop_merchant_name",
+    "Creator name":           "uniq_id",
+    "Creator ID":             "author_id",
+    "Creator binding status": "creator_binding_status",
+    "Creator city":           "creator_city",
+    "Creator level":          "creator_level",
+    "Sales value":            "fulfill_amount_usd",
+    "Orders":                 "order_count",
+    "Redemption amount":      "redemption_amount",
+    "Redeemed orders":        "redeemed_orders",
+    "Video views":            "poi_vv",
+    "CTR":                    "ctr",
+    "CVR":                    "cvr",
+    "AOV":                    "aov",
+    "Video completion":       "video_completion",
+    "Like rate":              "like_rate",
+    "Comment rate":           "comment_rate",
+}
 
 NUMERIC_COLS = [
-    "author_actual_sales_power",
-    "poi_vv",
-    "ctr",
-    "cvr",
-    "pay_amount_usd",
-    "fulfill_amount_usd",
-    "order_count",
-    "aov",
-    "poi_item_publish_cnt_db",
+    "fulfill_amount_usd", "order_count", "redemption_amount", "redeemed_orders",
+    "poi_vv", "ctr", "cvr", "aov", "video_completion", "like_rate", "comment_rate",
 ]
 
 META_COLS = [
-    "item_url",
-    "item_create_date",
-    "item_mcn_name_fix",
-    "poi_id",
-    "poi_name_en",
-    "poi_l1_asci_name",
-    "poi_l2_asci_name",
-    "close_loop_merchant_name",
-    "author_id",
-    "uniq_id",
-    "industry_source",
+    "industry_source", "post_type", "creator_type", "post_title", "item_create_date",
+    "duration", "task_type", "poi_id", "poi_name_en", "poi_l2_asci_name",
+    "close_loop_merchant_name", "uniq_id", "author_id",
+    "creator_binding_status", "creator_city", "creator_level",
 ]
 
+# Columns inserted into the raw transactions table (excludes id, imported_at, status_qc — DB defaults)
 FINAL_COLUMNS = [
-    "industry_source",
-    "item_id",
-    "item_url",
-    "item_create_date",
-    "item_mcn_name_fix",
-    "author_id",
-    "uniq_id",
-    "author_actual_sales_power",
-    "poi_id",
-    "poi_name_en",
-    "poi_l1_asci_name",
-    "poi_l2_asci_name",
-    "poi_vv",
-    "ctr",
-    "cvr",
-    "pay_amount_usd",
-    "fulfill_amount_usd",
-    "order_count",
-    "aov",
-    "close_loop_merchant_name",
-    "poi_item_publish_cnt_db",
-    "report_month",
-    "report_week",
-    "start_date",
-    "cutoff_date",
+    "industry_source", "item_id", "post_type", "creator_type", "post_title",
+    "item_create_date", "duration", "task_type",
+    "poi_id", "poi_name_en", "poi_l2_asci_name", "close_loop_merchant_name",
+    "uniq_id", "author_id", "creator_binding_status", "creator_city", "creator_level",
+    "fulfill_amount_usd", "order_count", "redemption_amount", "redeemed_orders",
+    "poi_vv", "ctr", "cvr", "aov", "video_completion", "like_rate", "comment_rate",
     "fulfill_amount_usd_weekly",
+    "report_month", "report_week", "start_date", "cutoff_date",
 ]
 
 SUMMARY_COLUMNS = [
-    "industry_source",
-    "author_id",
-    "uniq_id",
-    "poi_id",
-    "total_post",
-    "poi_vv",
-    "ctr",
-    "cvr",
-    "pay_amount_usd",
-    "fulfill_amount_usd",
-    "fulfill_amount_usd_weekly",
-    "order_count",
-    "aov",
-    "report_month",
-    "report_week",
-    "start_date",
-    "cutoff_date",
+    "industry_source", "author_id", "uniq_id", "poi_id",
+    "total_post", "poi_vv", "ctr", "cvr",
+    "fulfill_amount_usd", "fulfill_amount_usd_weekly", "order_count", "aov",
+    "redemption_amount", "redeemed_orders", "video_completion", "like_rate", "comment_rate",
+    "creator_level", "creator_city", "creator_binding_status",
+    "report_month", "report_week", "start_date", "cutoff_date",
 ]
+
 
 # ======================================================
 # HELPERS
@@ -104,37 +94,16 @@ def generate_month_options():
         months.append(f"{year}-{month:02d}")
     return months
 
+
 def month_str_to_date(month_str):
     year, month = map(int, month_str.split("-"))
     return date(year, month, 1)
 
-def fetch_previous_cumulative(conn, report_month_date, report_week):
-    """
-    Fetch previous week's fulfill_amount_usd from the RAW table,
-    keyed by item_url (globally unique per video).
-    """
-    if report_week == 1:
-        return {}
-    sql = f"""
-        SELECT item_url, fulfill_amount_usd
-        FROM {SCHEMA_NAME}.{TABLE_RAW}
-        WHERE report_month = %s AND report_week = %s
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql, (report_month_date, report_week - 1))
-        rows = cur.fetchall()
-    # Cast to float to avoid decimal.Decimal vs float type error
-    return {r["item_url"]: float(r["fulfill_amount_usd"] or 0) for r in rows}
-
 
 def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Deduplicate by item_url — each video URL should appear only once per sheet.
-    Strategy: groupby item_url, SUM numeric cols, keep first for meta cols.
-    """
+    """Deduplicate by item_id — sum numeric cols, keep first for meta cols."""
     before = len(df)
-
-    df["_url_safe"] = df["item_url"].fillna("__NULL__")
+    df["_id_safe"] = df["item_id"].fillna("__NULL__")
 
     agg_dict = {}
     for col in NUMERIC_COLS:
@@ -143,68 +112,39 @@ def deduplicate_df(df: pd.DataFrame) -> pd.DataFrame:
     for col in META_COLS:
         if col in df.columns:
             agg_dict[col] = "first"
-    if "item_id" in df.columns:
-        agg_dict["item_id"] = "first"
 
-    deduped = (
-        df.groupby("_url_safe", as_index=False, sort=False)
-        .agg(agg_dict)
-    )
-
-    deduped["item_url"] = deduped["_url_safe"].replace("__NULL__", None)
-    deduped = deduped.drop(columns=["_url_safe"])
-    df.drop(columns=["_url_safe"], inplace=True)
+    deduped = df.groupby("_id_safe", as_index=False, sort=False).agg(agg_dict)
+    deduped["item_id"] = deduped["_id_safe"].replace("__NULL__", None)
+    deduped = deduped.drop(columns=["_id_safe"])
+    df.drop(columns=["_id_safe"], inplace=True)
 
     after = len(deduped)
     if before != after:
         st.warning(f"⚠️ Deduplicated **{before - after}** duplicate rows (summed numeric values).")
-
     return deduped.reset_index(drop=True)
 
 
-def load_and_transform_csv(uploaded_file, industry_name):
-    df = pd.read_csv(uploaded_file, dtype={"(primary key)item_id": str})
+def load_and_transform_csv(uploaded_file) -> pd.DataFrame:
+    df = pd.read_csv(uploaded_file, dtype={"Post ID": str})
+    df = df.rename(columns=CSV_TO_DB)
 
-    # ---- Column rename ----
-    if industry_name in ["accommodation", "attraction"]:
-        df = df.rename(columns={
-            "(primary key)item_id":                     "item_id",
-            "item URL":                                  "item_url",
-            "alliance_open_loop_pay_amount_dollar":      "pay_amount_usd",
-            "alliance_open_loop_fulfill_amount_dollar":  "fulfill_amount_usd",
-            "alliance_open_loop_pay_order_cnt":          "order_count",
-            "AOV": "aov", "CTR": "ctr", "CVR": "cvr"
-        })
-        df["close_loop_merchant_name"] = None
+    if "item_id" in df.columns:
+        df["item_id"] = df["item_id"].astype(str).str.strip()
 
-    elif industry_name == "fnb":
-        df = df.rename(columns={
-            "(primary key)item_id":                          "item_id",
-            "item URL":                                       "item_url",
-            "alliance_close_loop_pay_pay_amount_dollar":     "pay_amount_usd",
-            "alliance_close_loop_fulfill_pay_amount_dollar": "fulfill_amount_usd",
-            "alliance_close_loop_pay_shop_order_cnt":        "order_count",
-            "Pay AOV":                                        "aov",
-            "Close Loop CVR - Supply POI Content Source":     "cvr",
-            "CTR":                                            "ctr",
-            "close_loop_has_service_merchant_names":          "close_loop_merchant_name"
-        })
+    if "item_create_date" in df.columns:
+        df["item_create_date"] = pd.to_datetime(
+            df["item_create_date"], errors="coerce"
+        ).dt.date
 
-    df["industry_source"] = industry_name
-
-    # ---- Clean numerics ----
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # ---- Ensure all columns exist ----
     for col in META_COLS + ["item_id"]:
         if col not in df.columns:
             df[col] = None
 
-    # ---- Deduplicate by item_url ----
     df = deduplicate_df(df)
-
     return df
 
 
@@ -234,41 +174,46 @@ def render():
         cutoff_date = st.date_input("Cutoff Date", value=date.today())
 
     report_month_date = month_str_to_date(selected_month)
-
     st.info(f"📌 Importing: **{selected_month}** · **Week {selected_week}** · **{start_date}** → **{cutoff_date}**")
-
-    selected_industry = st.selectbox("Industry Source", INDUSTRY_OPTIONS)
 
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if not uploaded_file:
         return
 
     try:
-        final_df = load_and_transform_csv(uploaded_file, selected_industry)
+        final_df = load_and_transform_csv(uploaded_file)
 
-        # ---- Attach metadata ----
-        final_df["report_month"]              = report_month_date
-        final_df["report_week"]               = selected_week
-        final_df["start_date"]                = start_date
-        final_df["cutoff_date"]               = cutoff_date
-        final_df["item_create_date"]          = cutoff_date
-        final_df["fulfill_amount_usd_weekly"] = None
+        # Attach period metadata
+        final_df["report_month"] = report_month_date
+        final_df["report_week"]  = selected_week
+        final_df["start_date"]   = start_date
+        final_df["cutoff_date"]  = cutoff_date
+
+        # Data is daily (not cumulative) — weekly value = current value directly, no delta needed
+        final_df["fulfill_amount_usd_weekly"] = final_df["fulfill_amount_usd"]
 
         for col in FINAL_COLUMNS:
             if col not in final_df.columns:
                 final_df[col] = None
 
-        st.success(f"✅ Rows ready for import: **{len(final_df)}**")
+        industries = final_df["industry_source"].dropna().unique().tolist()
+        st.success(f"✅ Rows ready: **{len(final_df)}** · Industries: **{', '.join(industries)}**")
 
         with st.expander("🔍 Preview (first 20 rows)", expanded=False):
-            preview_cols = ["item_url", "industry_source", "uniq_id", "fulfill_amount_usd", "pay_amount_usd", "order_count"]
-            st.dataframe(final_df[preview_cols].head(20), use_container_width=True)
+            preview_cols = ["industry_source", "item_id", "uniq_id", "poi_name_en",
+                            "fulfill_amount_usd", "order_count", "item_create_date"]
+            st.dataframe(
+                final_df[[c for c in preview_cols if c in final_df.columns]].head(20),
+                use_container_width=True,
+            )
 
-        # ---- Safety check ----
-        dupes = final_df.duplicated(subset=["item_url"], keep=False)
+        # Safety check — should already be clean after dedup, but guard anyway
+        dupes = final_df.duplicated(subset=["item_id"], keep=False)
         if dupes.any():
-            st.error(f"❌ {dupes.sum()} duplicate item_url rows still exist. Cannot import.")
-            st.dataframe(final_df[dupes][["item_url", "industry_source", "uniq_id", "fulfill_amount_usd"]].head(20))
+            st.error(f"❌ {dupes.sum()} duplicate item_id rows still exist. Cannot import.")
+            st.dataframe(
+                final_df[dupes][["item_id", "industry_source", "uniq_id", "fulfill_amount_usd"]].head(20)
+            )
             return
 
         # ======================================================
@@ -277,39 +222,23 @@ def render():
         if st.button("💾 Import to Database", type="primary"):
             conn = get_connection()
             try:
-                # ── Step 1: Fetch previous week cumulative from SUMMARY table ──
-                prev_cumulative = fetch_previous_cumulative(conn, report_month_date, selected_week)
-
-                if selected_week == 1:
-                    st.info("ℹ️ Week 1 — weekly value = cumulative (no previous baseline).")
-                else:
-                    matched = sum(1 for url in final_df["item_url"] if url in prev_cumulative)
-                    st.info(f"ℹ️ Week {selected_week} — delta vs Week {selected_week - 1}. Matched **{matched}/{len(final_df)}** videos.")
-
-                # ── Step 2: Calculate weekly delta per video ──
-                def calc_weekly(row):
-                    prev    = prev_cumulative.get(row["item_url"], 0.0)
-                    current = float(row["fulfill_amount_usd"]) if pd.notna(row["fulfill_amount_usd"]) else 0.0
-                    return max(current - prev, 0.0)
-
-                final_df["fulfill_amount_usd_weekly"] = final_df.apply(calc_weekly, axis=1)
-
-                # ── Step 3: Delete existing raw rows ──
+                # ── Step 1: Delete existing raw rows for this month/week/industry ──
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_RAW} WHERE report_month = %s AND report_week = %s",
-                        (report_month_date, selected_week)
+                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_RAW} "
+                        "WHERE report_month = %s AND report_week = %s AND industry_source = ANY(%s)",
+                        (report_month_date, selected_week, industries),
                     )
                     deleted_raw = cur.rowcount
                 if deleted_raw > 0:
                     st.warning(f"🗑️ Deleted **{deleted_raw}** existing raw rows for {selected_month} Week {selected_week}.")
 
-                # ── Step 4: Insert raw rows ──
-                insert_query = f"""
+                # ── Step 2: Insert raw rows ──
+                insert_raw = f"""
                     INSERT INTO {SCHEMA_NAME}.{TABLE_RAW} ({", ".join(FINAL_COLUMNS)})
                     VALUES %s
                 """
-                values = [
+                raw_values = [
                     tuple(
                         None if (val is None or (isinstance(val, float) and pd.isna(val))) else val
                         for val in (row[col] for col in FINAL_COLUMNS)
@@ -317,38 +246,47 @@ def render():
                     for _, row in final_df.iterrows()
                 ]
                 with conn.cursor() as cur:
-                    execute_values(cur, insert_query, values)
+                    execute_values(cur, insert_raw, raw_values)
 
-                # ── Step 5: Delete existing summary rows ──
+                # ── Step 3: Delete existing summary rows ──
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_SUMMARY} WHERE report_month = %s AND report_week = %s",
-                        (report_month_date, selected_week)
+                        f"DELETE FROM {SCHEMA_NAME}.{TABLE_SUMMARY} "
+                        "WHERE report_month = %s AND report_week = %s AND industry_source = ANY(%s)",
+                        (report_month_date, selected_week, industries),
                     )
                     deleted_summary = cur.rowcount
                 if deleted_summary > 0:
-                    st.warning(f"🗑️ Deleted **{deleted_summary}** existing summary rows for {selected_month} Week {selected_week}.")
+                    st.warning(f"🗑️ Deleted **{deleted_summary}** existing summary rows.")
 
-                # ── Step 6: Aggregate into summary ──
+                # ── Step 4: Count total_post (videos whose post_date is within start–cutoff) ──
                 item_dates = pd.to_datetime(final_df["item_create_date"])
                 final_df["_in_date_range"] = (
                     (item_dates >= pd.to_datetime(start_date)) &
                     (item_dates <= pd.to_datetime(cutoff_date))
                 ).astype(int)
 
+                # ── Step 5: Aggregate into summary ──
                 summary_df = final_df.groupby(
                     ["industry_source", "author_id", "uniq_id", "poi_id"],
-                    as_index=False
+                    as_index=False,
                 ).agg(
-                    total_post=("_in_date_range", "sum"),
-                    poi_vv=("poi_vv", "sum"),
-                    ctr=("ctr", "mean"),
-                    cvr=("cvr", "mean"),
-                    pay_amount_usd=("pay_amount_usd", "sum"),
-                    fulfill_amount_usd=("fulfill_amount_usd", "sum"),
-                    fulfill_amount_usd_weekly=("fulfill_amount_usd_weekly", "sum"),
-                    order_count=("order_count", "sum"),
-                    aov=("aov", "mean"),
+                    total_post                = ("_in_date_range",        "sum"),
+                    poi_vv                    = ("poi_vv",                 "sum"),
+                    ctr                       = ("ctr",                    "mean"),
+                    cvr                       = ("cvr",                    "mean"),
+                    fulfill_amount_usd        = ("fulfill_amount_usd",     "sum"),
+                    fulfill_amount_usd_weekly = ("fulfill_amount_usd_weekly", "sum"),
+                    order_count               = ("order_count",            "sum"),
+                    aov                       = ("aov",                    "mean"),
+                    redemption_amount         = ("redemption_amount",      "sum"),
+                    redeemed_orders           = ("redeemed_orders",        "sum"),
+                    video_completion          = ("video_completion",       "mean"),
+                    like_rate                 = ("like_rate",              "mean"),
+                    comment_rate              = ("comment_rate",           "mean"),
+                    creator_level             = ("creator_level",          "first"),
+                    creator_city              = ("creator_city",           "first"),
+                    creator_binding_status    = ("creator_binding_status", "first"),
                 )
                 summary_df["report_month"] = report_month_date
                 summary_df["report_week"]  = selected_week
@@ -370,20 +308,18 @@ def render():
                     execute_values(cur, insert_summary, summary_values)
 
                 conn.commit()
-
                 st.success(
-                    f"✅ **{len(final_df)}** rows inserted into raw + summary tables for "
-                    f"**{selected_month}** · Week **{selected_week}** · Cutoff **{cutoff_date}**"
+                    f"✅ **{len(final_df)}** raw rows · **{len(summary_df)}** summary rows imported — "
+                    f"**{selected_month}** Week **{selected_week}** · Cutoff **{cutoff_date}**"
                 )
 
-                # ── Summary display ──
                 st.subheader("📊 Import Summary")
-                summary = final_df.groupby("industry_source").agg(
-                    videos=("item_url", "count"),
-                    total_fulfill_cumulative=("fulfill_amount_usd", "sum"),
-                    total_fulfill_weekly=("fulfill_amount_usd_weekly", "sum"),
+                display = final_df.groupby("industry_source").agg(
+                    videos          = ("item_id",           "count"),
+                    total_sales_usd = ("fulfill_amount_usd", "sum"),
+                    total_orders    = ("order_count",        "sum"),
                 ).reset_index()
-                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.dataframe(display, use_container_width=True, hide_index=True)
 
             except Exception as e:
                 conn.rollback()
