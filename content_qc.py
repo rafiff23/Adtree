@@ -1,3 +1,4 @@
+import datetime
 import streamlit as st
 import pandas as pd
 
@@ -161,9 +162,9 @@ def _render_qc_tab(username: str):
             "QC Status", ["All", "Unreviewed"] + status_options, key="cqc_qc_filter"
         )
     with c2:
-        date_from = st.date_input("From Date", value=None, key="cqc_date_from")
+        date_from = st.date_input("From Date", value=datetime.date.today(), key="cqc_date_from")
     with c3:
-        date_to = st.date_input("To Date", value=None, key="cqc_date_to")
+        date_to = st.date_input("To Date", value=datetime.date.today(), key="cqc_date_to")
     with c4:
         search = st.text_input("Search (Post ID / Title / Creator)", key="cqc_search")
 
@@ -197,7 +198,7 @@ def _render_qc_tab(username: str):
         )
     with r2:
         row_to = st.number_input(
-            "To row", min_value=1, max_value=total, value=total, step=1, key="cqc_row_to"
+            "To row", min_value=1, max_value=total, value=min(1000, total), step=1, key="cqc_row_to"
         )
 
     row_from = int(row_from)

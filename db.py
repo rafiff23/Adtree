@@ -499,7 +499,6 @@ def fetch_content_qc_posts(qc_filter=None, date_from=None, date_to=None, search=
            AND l.locked_at > NOW() - INTERVAL '{_LOCK_TIMEOUT_MIN} minutes'
         WHERE {" AND ".join(conditions)}
         ORDER BY p.post_date DESC, p.post_id
-        LIMIT 1000
     """
 
     conn = get_connection()
