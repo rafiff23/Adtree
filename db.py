@@ -300,6 +300,43 @@ import pandas as _pd
 
 _LOCK_TIMEOUT_MIN = 10
 
+_QC_WEIGHTS = {
+    "qc_hook":     1.5,
+    "qc_usp":      2.0,
+    "qc_product":  2.0,
+    "qc_review":   2.0,
+    "qc_cta":      1.0,
+    "qc_engaging": 1.5,
+}
+
+
+def _calc_qc_score(qc_data: dict) -> float:
+    score = 0.0
+    for field, weight in _QC_WEIGHTS.items():
+        if qc_data.get(field):
+            score += weight
+    quality = qc_data.get("qc_quality")
+    if quality:
+        score += float(quality)
+    return score
+
+
+def _calc_final_status(score: float, qc_data: dict):
+    reviewed = (
+        qc_data.get("qc_type") is not None
+        or any(qc_data.get(f) for f in _QC_WEIGHTS)
+        or qc_data.get("qc_quality") is not None
+    )
+    if not reviewed:
+        return None
+    if score > 10:
+        return "Very Good"
+    if score >= 7:
+        return "Good"
+    if score >= 5:
+        return "Fair"
+    return "Poor"
+
 _METRIC_COLS = [
     "creator_level", "sales_value", "orders", "redemption_amount",
     "redeemed_orders", "video_views", "ctr", "cvr", "aov",
@@ -460,14 +497,14 @@ def upsert_content_qc_posts(rows: list) -> tuple:
 
 
 def fetch_content_qc_posts(qc_filter=None, date_from=None, date_to=None, search=None) -> list:
-    """Fetch posts joined with active lock info."""
+    """Fetch posts for QC review."""
     conditions = ["1=1"]
     params: dict = {}
 
     if qc_filter == "Unreviewed":
-        conditions.append("p.qc_status IS NULL")
+        conditions.append("p.qc_updated_at IS NULL")
     elif qc_filter:
-        conditions.append("p.qc_status = %(qc_filter)s")
+        conditions.append("p.qc_final_status = %(qc_filter)s")
         params["qc_filter"] = qc_filter
 
     if date_from:
@@ -478,25 +515,18 @@ def fetch_content_qc_posts(qc_filter=None, date_from=None, date_to=None, search=
         params["date_to"] = date_to
     if search:
         conditions.append(
-            "(p.post_title ILIKE %(search)s "
-            " OR p.creator_name ILIKE %(search)s "
-            " OR p.post_id ILIKE %(search)s)"
+            "(p.creator_name ILIKE %(search)s OR p.post_id ILIKE %(search)s)"
         )
         params["search"] = f"%{search}%"
 
     sql = f"""
         SELECT
-            p.post_id, p.creator_id, p.post_title, p.post_date,
-            p.creator_name, p.creator_level, p.location_city, p.task_type,
-            p.video_views, p.like_rate, p.comment_rate, p.ctr, p.cvr,
-            p.qc_status, p.qc_updated_by, p.qc_updated_at,
-            p.metrics_updated_at,
-            l.locked_by,
-            l.locked_at
+            p.post_id, p.creator_id, p.post_date, p.creator_name,
+            p.qc_type, p.qc_hook, p.qc_usp, p.qc_product, p.qc_review,
+            p.qc_cta, p.qc_engaging, p.qc_quality,
+            p.qc_total_score, p.qc_issue, p.qc_final_status,
+            p.qc_updated_by, p.qc_updated_at
         FROM public.content_qc_posts p
-        LEFT JOIN public.content_qc_locks l
-            ON p.post_id = l.post_id
-           AND l.locked_at > NOW() - INTERVAL '{_LOCK_TIMEOUT_MIN} minutes'
         WHERE {" AND ".join(conditions)}
         ORDER BY p.post_date DESC, p.post_id
     """
@@ -583,11 +613,15 @@ def release_content_qc_lock(post_id: str, username: str):
         conn.close()
 
 
-def save_content_qc_status(post_id: str, qc_status, username: str, expected_updated_at) -> tuple:
+def save_content_qc_review(post_id: str, qc_data: dict, username: str, expected_updated_at) -> tuple:
     """
-    Save qc_status with optimistic conflict detection.
+    Save all QC scoring fields with optimistic conflict detection.
+    Computes qc_total_score and qc_final_status automatically.
     Returns (success: bool, message: str).
     """
+    total_score  = _calc_qc_score(qc_data)
+    final_status = _calc_final_status(total_score, qc_data)
+
     conn = get_connection()
     try:
         with conn:
@@ -611,45 +645,37 @@ def save_content_qc_status(post_id: str, qc_status, username: str, expected_upda
                 cur.execute(
                     """
                     UPDATE public.content_qc_posts
-                    SET qc_status = %s, qc_updated_by = %s, qc_updated_at = NOW()
+                    SET qc_type         = %s,
+                        qc_hook         = %s,
+                        qc_usp          = %s,
+                        qc_product      = %s,
+                        qc_review       = %s,
+                        qc_cta          = %s,
+                        qc_engaging     = %s,
+                        qc_quality      = %s,
+                        qc_total_score  = %s,
+                        qc_issue        = %s,
+                        qc_final_status = %s,
+                        qc_updated_by   = %s,
+                        qc_updated_at   = NOW()
                     WHERE post_id = %s
                     """,
-                    (qc_status or None, username, post_id),
+                    (
+                        qc_data.get("qc_type") or None,
+                        bool(qc_data.get("qc_hook")),
+                        bool(qc_data.get("qc_usp")),
+                        bool(qc_data.get("qc_product")),
+                        bool(qc_data.get("qc_review")),
+                        bool(qc_data.get("qc_cta")),
+                        bool(qc_data.get("qc_engaging")),
+                        qc_data.get("qc_quality") or None,
+                        total_score,
+                        qc_data.get("qc_issue") or None,
+                        final_status,
+                        username,
+                        post_id,
+                    ),
                 )
         return True, "ok"
-    finally:
-        conn.close()
-
-
-def fetch_qc_status_options() -> list:
-    """Return all QC status labels ordered by sort_order."""
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT label FROM public.qc_status_options ORDER BY sort_order, label"
-            )
-            return [row["label"] for row in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-def add_qc_status_option(label: str) -> tuple:
-    """Insert a new QC status label. Returns (success, message)."""
-    label = label.strip()
-    if not label:
-        return False, "Label cannot be empty."
-    conn = get_connection()
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO public.qc_status_options (label) VALUES (%s) "
-                    "ON CONFLICT (label) DO NOTHING",
-                    (label,),
-                )
-        return True, "ok"
-    except Exception as e:
-        return False, str(e)
     finally:
         conn.close()

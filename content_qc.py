@@ -12,17 +12,48 @@ from db import (
     prepare_content_qc_csv,
     upsert_content_qc_posts,
     fetch_content_qc_posts,
-    save_content_qc_status,
-    fetch_qc_status_options,
-    add_qc_status_option,
+    save_content_qc_review,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────────────────────
+
+_QC_BOOL_COLS = ["qc_hook", "qc_usp", "qc_product", "qc_review", "qc_cta", "qc_engaging"]
+_QC_EDITABLE  = ["qc_type"] + _QC_BOOL_COLS + ["qc_quality", "qc_issue"]
+
+_ISSUE_OPTIONS = [
+    "Low Video Quality (Not HD)",
+    "Unreadable Text / UI",
+    "Missing Mandatory Elements",
+    "Product Not Included",
+    "No USP / No Review",
+    "No UI",
+    "Incorrect / Duplicate Link",
+    "Non-Original Footage (Google / AI)",
+    "Repetitive / Redundant Content",
+    "Footage Not Aligned with Merchant",
+    "Content Not Engaging",
+    "Duplicate Content Submission",
+    "Video Not Accessible",
+]
+
+_FINAL_STATUS_OPTS = ["All", "Unreviewed", "Very Good", "Good", "Fair", "Poor"]
+
+
+def _norm_val(v):
+    """Normalise a cell value for change-detection comparison."""
+    if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+        return None
+    return v
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Username gate
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _username_gate() -> str | None:
+def _username_gate():
     if st.session_state.get("cqc_username"):
         return st.session_state["cqc_username"]
 
@@ -94,11 +125,10 @@ def _render_import_tab():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# QC Review tab  –  bulk data_editor approach
+# QC Review tab
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_qc_data(qc_filter, date_from, date_to, search):
-    """Fetch from DB and cache in session state. Call when filters change or after save."""
     rows = fetch_content_qc_posts(
         qc_filter=qc_filter if qc_filter != "All" else None,
         date_from=date_from or None,
@@ -107,7 +137,6 @@ def _load_qc_data(qc_filter, date_from, date_to, search):
     )
     df = pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
 
-    # Build TikTok URL column
     if not df.empty:
         df["post_url"] = (
             "https://www.tiktok.com/@"
@@ -115,60 +144,33 @@ def _load_qc_data(qc_filter, date_from, date_to, search):
             + "/video/"
             + df["post_id"].fillna("")
         )
+        for col in _QC_BOOL_COLS:
+            if col in df.columns:
+                df[col] = df[col].fillna(False).astype(bool)
+        if "qc_issue" in df.columns:
+            df["qc_issue"] = df["qc_issue"].fillna("")
 
     st.session_state["cqc_df"] = df
-    # Store original qc_status + qc_updated_at per post_id for conflict detection
     if not df.empty:
         st.session_state["cqc_original_qc"] = (
-            df.set_index("post_id")[["qc_status", "qc_updated_at"]].to_dict("index")
+            df.set_index("post_id")[["qc_updated_at"]].to_dict("index")
         )
     else:
         st.session_state["cqc_original_qc"] = {}
 
 
-def _load_status_options() -> list:
-    """Fetch QC status options from DB, cached in session state."""
-    if "cqc_status_options" not in st.session_state:
-        try:
-            st.session_state["cqc_status_options"] = fetch_qc_status_options()
-        except Exception:
-            st.session_state["cqc_status_options"] = ["Good", "Bad"]
-    return st.session_state["cqc_status_options"]
-
-
 def _render_qc_tab(username: str):
-    status_options = _load_status_options()
-
-    # ── Manage Statuses expander ───────────────────────────────────────────────
-    with st.expander("⚙️ Manage QC Statuses"):
-        st.caption(f"Current statuses: {', '.join(status_options)}")
-        new_label = st.text_input("New status label", key="cqc_new_status_input")
-        if st.button("Add Status", key="cqc_add_status_btn"):
-            if new_label.strip():
-                ok, msg = add_qc_status_option(new_label)
-                if ok:
-                    st.session_state.pop("cqc_status_options", None)
-                    st.success(f"'{new_label.strip()}' added.")
-                    st.rerun()
-                else:
-                    st.error(f"Failed: {msg}")
-            else:
-                st.warning("Please enter a label.")
-
     # ── Filters ───────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        qc_filter = st.selectbox(
-            "QC Status", ["All", "Unreviewed"] + status_options, key="cqc_qc_filter"
-        )
+        qc_filter = st.selectbox("Final Status", _FINAL_STATUS_OPTS, key="cqc_qc_filter")
     with c2:
         date_from = st.date_input("From Date", value=datetime.date.today(), key="cqc_date_from")
     with c3:
         date_to = st.date_input("To Date", value=datetime.date.today(), key="cqc_date_to")
     with c4:
-        search = st.text_input("Search (Post ID / Title / Creator)", key="cqc_search")
+        search = st.text_input("Search (Post ID / Creator)", key="cqc_search")
 
-    # Reload when filters change or explicitly requested
     filter_key = (qc_filter, str(date_from), str(date_to), search.strip())
     if (
         "cqc_df" not in st.session_state
@@ -207,36 +209,44 @@ def _render_qc_tab(username: str):
 
     st.caption(
         f"Showing rows **{row_from}–{row_from + len(df) - 1}** of **{total:,}** total"
-        " — edit QC Status cells directly, then save."
+        " — edit QC cells directly, then save."
     )
 
     # ── Editable table ────────────────────────────────────────────────────────
     display_cols = [
-        "post_url", "post_id", "post_title", "post_date",
-        "creator_name", "creator_level",
-        "video_views", "ctr", "cvr", "like_rate", "comment_rate",
-        "qc_status", "qc_updated_by",
+        "post_url", "post_date", "creator_name",
+        "qc_type",
+        "qc_hook", "qc_usp", "qc_product", "qc_review", "qc_cta", "qc_engaging",
+        "qc_quality", "qc_total_score",
+        "qc_issue",
+        "qc_final_status", "qc_updated_by",
     ]
     display_cols = [c for c in display_cols if c in df.columns]
 
     edited_df = st.data_editor(
         df[display_cols],
         column_config={
-            "post_url":      st.column_config.LinkColumn("Post URL", display_text="Open ↗"),
-            "post_id":       st.column_config.TextColumn("Post ID", disabled=True),
-            "post_title":    st.column_config.TextColumn("Title", disabled=True),
-            "post_date":     st.column_config.DateColumn("Date", disabled=True),
-            "creator_name":  st.column_config.TextColumn("Creator", disabled=True),
-            "creator_level": st.column_config.NumberColumn("Level", disabled=True),
-            "video_views":   st.column_config.NumberColumn("Views", disabled=True, format="%d"),
-            "ctr":           st.column_config.NumberColumn("CTR", disabled=True, format="%.2f%%"),
-            "cvr":           st.column_config.NumberColumn("CVR", disabled=True, format="%.2f%%"),
-            "like_rate":     st.column_config.NumberColumn("Like Rate", disabled=True, format="%.2f%%"),
-            "comment_rate":  st.column_config.NumberColumn("Comment Rate", disabled=True, format="%.2f%%"),
-            "qc_status":     st.column_config.SelectboxColumn(
-                                 "QC Status", options=status_options, required=False
-                             ),
-            "qc_updated_by": st.column_config.TextColumn("Updated By", disabled=True),
+            "post_url":       st.column_config.LinkColumn("Post URL", display_text="Open ↗"),
+            "post_date":      st.column_config.DateColumn("Post Date", disabled=True),
+            "creator_name":   st.column_config.TextColumn("Creator", disabled=True),
+            "qc_type":        st.column_config.SelectboxColumn(
+                                  "Type", options=["Video", "Image"], required=False
+                              ),
+            "qc_hook":        st.column_config.CheckboxColumn("Hook (×1.5)"),
+            "qc_usp":         st.column_config.CheckboxColumn("USP (×2)"),
+            "qc_product":     st.column_config.CheckboxColumn("Product (×2)"),
+            "qc_review":      st.column_config.CheckboxColumn("Review (×2)"),
+            "qc_cta":         st.column_config.CheckboxColumn("CTA (×1)"),
+            "qc_engaging":    st.column_config.CheckboxColumn("Engaging (×1.5)"),
+            "qc_quality":     st.column_config.SelectboxColumn(
+                                  "Quality (1-3)", options=[1, 2, 3], required=False
+                              ),
+            "qc_total_score": st.column_config.NumberColumn(
+                                  "Total Score", disabled=True, format="%.1f"
+                              ),
+            "qc_issue":       st.column_config.TextColumn("Issue", width="large"),
+            "qc_final_status": st.column_config.TextColumn("Final Status", disabled=True),
+            "qc_updated_by":  st.column_config.TextColumn("Updated By", disabled=True),
         },
         use_container_width=True,
         height=520,
@@ -244,10 +254,19 @@ def _render_qc_tab(username: str):
         key="cqc_editor",
     )
 
+    # ── Issue options reference ───────────────────────────────────────────────
+    with st.expander("📋 Issue options — copy into the Issue cell (separate multiple with ', ')"):
+        st.write(", ".join(f"`{o}`" for o in _ISSUE_OPTIONS))
+
     # ── Detect changes ────────────────────────────────────────────────────────
-    orig_status = df["qc_status"].fillna("").values
-    new_status  = edited_df["qc_status"].fillna("").values
-    changed_idx = [i for i, (o, n) in enumerate(zip(orig_status, new_status)) if o != n]
+    changed_idx = []
+    for i in range(len(df)):
+        for col in _QC_EDITABLE:
+            if col not in df.columns or col not in edited_df.columns:
+                continue
+            if _norm_val(df.iloc[i][col]) != _norm_val(edited_df.iloc[i][col]):
+                changed_idx.append(i)
+                break
 
     if not changed_idx:
         return
@@ -259,13 +278,13 @@ def _render_qc_tab(username: str):
         saved, conflicts, errors = 0, [], []
 
         for i in changed_idx:
-            post_id   = df.iloc[i]["post_id"]
-            new_val   = edited_df.iloc[i]["qc_status"]
-            new_val  = None if pd.isna(new_val) or new_val == "" else new_val
+            post_id  = df.iloc[i]["post_id"]
+            row      = edited_df.iloc[i]
+            qc_data  = {col: _norm_val(row[col]) for col in _QC_EDITABLE if col in row.index}
             original = st.session_state["cqc_original_qc"].get(post_id, {})
             expected_at = original.get("qc_updated_at")
 
-            ok, msg = save_content_qc_status(post_id, new_val, username, expected_at)
+            ok, msg = save_content_qc_review(post_id, qc_data, username, expected_at)
             if ok:
                 saved += 1
             elif "Conflict" in msg:
@@ -277,8 +296,8 @@ def _render_qc_tab(username: str):
             st.success(f"✅ {saved} row(s) saved.")
         if conflicts:
             st.warning(
-                f"⚠️ {len(conflicts)} row(s) were already updated by someone else "
-                f"while you were editing — your change was not applied: {conflicts}"
+                f"⚠️ {len(conflicts)} row(s) conflict — already updated by someone else. "
+                f"Refresh and try again: {conflicts}"
             )
         if errors:
             st.error(f"Errors: {errors}")
@@ -307,10 +326,9 @@ def render():
     with col_title:
         st.caption(f"Logged in as: **{username}**")
 
-    # Auto-refresh every 30 s
     if _HAS_AUTOREFRESH:
         st_autorefresh(interval=30_000, key="cqc_autorefresh")
-    elif not _HAS_AUTOREFRESH:
+    else:
         if st.button("🔄 Refresh", key="cqc_manual_refresh"):
             st.rerun()
 
