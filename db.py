@@ -613,6 +613,27 @@ def release_content_qc_lock(post_id: str, username: str):
         conn.close()
 
 
+def save_content_qc_issue(post_id: str, qc_issue, username: str) -> tuple:
+    """Update only the qc_issue field for a post."""
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public.content_qc_posts
+                    SET qc_issue = %s, qc_updated_by = %s, qc_updated_at = NOW()
+                    WHERE post_id = %s
+                    """,
+                    (qc_issue or None, username, post_id),
+                )
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
 def save_content_qc_review(post_id: str, qc_data: dict, username: str, expected_updated_at) -> tuple:
     """
     Save all QC scoring fields with optimistic conflict detection.

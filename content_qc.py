@@ -244,7 +244,9 @@ def _render_qc_tab(username: str):
             "qc_total_score": st.column_config.NumberColumn(
                                   "Total Score", disabled=True, format="%.1f"
                               ),
-            "qc_issue":       st.column_config.TextColumn("Issue", width="large"),
+            "qc_issue":       st.column_config.SelectboxColumn(
+                                  "Issue", options=_ISSUE_OPTIONS, required=False, width="large"
+                              ),
             "qc_final_status": st.column_config.TextColumn("Final Status", disabled=True),
             "qc_updated_by":  st.column_config.TextColumn("Updated By", disabled=True),
         },
@@ -253,10 +255,6 @@ def _render_qc_tab(username: str):
         hide_index=True,
         key="cqc_editor",
     )
-
-    # ── Issue options reference ───────────────────────────────────────────────
-    with st.expander("📋 Issue options — copy into the Issue cell (separate multiple with ', ')"):
-        st.write(", ".join(f"`{o}`" for o in _ISSUE_OPTIONS))
 
     # ── Detect changes ────────────────────────────────────────────────────────
     changed_idx = []
