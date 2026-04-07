@@ -20,7 +20,7 @@ from db import (
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-_QC_BOOL_COLS = ["qc_hook", "qc_usp", "qc_product", "qc_review", "qc_cta", "qc_engaging"]
+_QC_BOOL_COLS = ["qc_hook", "qc_usp", "qc_product", "qc_cta", "qc_engaging"]
 _QC_EDITABLE  = ["qc_type"] + _QC_BOOL_COLS + ["qc_quality", "qc_issue"]
 
 _ISSUE_OPTIONS = [
@@ -46,6 +46,8 @@ def _norm_val(v):
     """Normalise a cell value for change-detection comparison."""
     if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
         return None
+    if isinstance(v, list):
+        return tuple(sorted(v)) if v else None
     return v
 
 
@@ -148,7 +150,9 @@ def _load_qc_data(qc_filter, date_from, date_to, search):
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
         if "qc_issue" in df.columns:
-            df["qc_issue"] = df["qc_issue"].fillna("")
+            df["qc_issue"] = df["qc_issue"].apply(
+                lambda v: [i.strip() for i in v.split(",") if i.strip()] if v else []
+            )
 
     st.session_state["cqc_df"] = df
     if not df.empty:
@@ -216,7 +220,7 @@ def _render_qc_tab(username: str):
     display_cols = [
         "post_url", "post_date", "creator_name",
         "qc_type",
-        "qc_hook", "qc_usp", "qc_product", "qc_review", "qc_cta", "qc_engaging",
+        "qc_hook", "qc_usp", "qc_product", "qc_cta", "qc_engaging",
         "qc_quality", "qc_total_score",
         "qc_issue",
         "qc_final_status", "qc_updated_by",
@@ -232,20 +236,19 @@ def _render_qc_tab(username: str):
             "qc_type":        st.column_config.SelectboxColumn(
                                   "Type", options=["Video", "Image"], required=False
                               ),
-            "qc_hook":        st.column_config.CheckboxColumn("Hook (×1.5)"),
+            "qc_hook":        st.column_config.CheckboxColumn("Hook (×3)"),
             "qc_usp":         st.column_config.CheckboxColumn("USP (×2)"),
             "qc_product":     st.column_config.CheckboxColumn("Product (×2)"),
-            "qc_review":      st.column_config.CheckboxColumn("Review (×2)"),
-            "qc_cta":         st.column_config.CheckboxColumn("CTA (×1)"),
-            "qc_engaging":    st.column_config.CheckboxColumn("Engaging (×1.5)"),
+            "qc_cta":         st.column_config.CheckboxColumn("CTA (×2)"),
+            "qc_engaging":    st.column_config.CheckboxColumn("Engaging (×2)"),
             "qc_quality":     st.column_config.SelectboxColumn(
-                                  "Quality (1-3)", options=[1, 2, 3], required=False
+                                  "Quality (1-4)", options=[1, 2, 3, 4], required=False
                               ),
             "qc_total_score": st.column_config.NumberColumn(
                                   "Total Score", disabled=True, format="%.1f"
                               ),
-            "qc_issue":       st.column_config.SelectboxColumn(
-                                  "Issue", options=_ISSUE_OPTIONS, required=False, width="large"
+            "qc_issue":       st.column_config.MultiselectColumn(
+                                  "Issue", options=_ISSUE_OPTIONS, width="large"
                               ),
             "qc_final_status": st.column_config.TextColumn("Final Status", disabled=True),
             "qc_updated_by":  st.column_config.TextColumn("Updated By", disabled=True),

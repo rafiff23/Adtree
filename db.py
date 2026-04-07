@@ -301,12 +301,11 @@ import pandas as _pd
 _LOCK_TIMEOUT_MIN = 10
 
 _QC_WEIGHTS = {
-    "qc_hook":     1.5,
+    "qc_hook":     3.0,
     "qc_usp":      2.0,
     "qc_product":  2.0,
-    "qc_review":   2.0,
-    "qc_cta":      1.0,
-    "qc_engaging": 1.5,
+    "qc_cta":      2.0,
+    "qc_engaging": 2.0,
 }
 
 
@@ -691,7 +690,7 @@ def save_content_qc_review(post_id: str, qc_data: dict, username: str, expected_
                         bool(qc_data.get("qc_engaging")),
                         qc_data.get("qc_quality") or None,
                         total_score,
-                        qc_data.get("qc_issue") or None,
+                        ", ".join(qc_data["qc_issue"]) if qc_data.get("qc_issue") else None,
                         final_status,
                         username,
                         post_id,
