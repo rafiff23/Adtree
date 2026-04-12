@@ -1,8 +1,6 @@
 import streamlit as st
 from creator_list import render as creator_list_page
 from content_submission import render as content_submission_page
-from content_qc import render as content_qc_page
-from leaderboard_import import render as leaderboard_page
 from voucherpage import render as voucher_page
 from onboarding import render as onboarding_page
 from settings import render as settings_page
@@ -11,7 +9,7 @@ st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Creator List", "Content Submissions", "Content QC", "Leaderboard Import", "Voucher Import", "Onboarding Import", "Settings"],
+    ["Creator List", "Content Submissions", "Voucher Import", "Onboarding Import", "Settings"],
 )
 
 if page == "Creator List":
@@ -19,12 +17,6 @@ if page == "Creator List":
 
 elif page == "Content Submissions":
     content_submission_page()
-
-elif page == "Content QC":
-    content_qc_page()
-
-elif page == "Leaderboard Import":
-    leaderboard_page()
 
 elif page == "Voucher Import":
     voucher_page()
