@@ -802,3 +802,101 @@ def delete_agency_target(target_id: int):
                 cur.execute("DELETE FROM target.agency_target WHERE id = %s", (target_id,))
     finally:
         conn.close()
+
+
+def fetch_agency_target_performance(agency_id: int = None, industry: str = None) -> list:
+    """
+    Fetch performance data: actual posts from tiktok_go_video_transactions
+    joined with agency targets, grouped by agency, industry, and week.
+
+    Returns list of rows with:
+    - agency_name, industry, target_number
+    - week_1/2/3/4 actual posts (from transactions)
+    - week_1/2/3/4 target (from agency_target)
+    """
+    sql = """
+        SELECT
+            am.agency_name,
+            tgvt.industry_source,
+            COALESCE(aat.target_number, 0) as target_number,
+            COALESCE(aat.week_1, 0) as target_week_1,
+            COALESCE(aat.week_2, 0) as target_week_2,
+            COALESCE(aat.week_3, 0) as target_week_3,
+            COALESCE(aat.week_4, 0) as target_week_4,
+            tgvt.report_week,
+            COUNT(*) as post_count
+        FROM leaderboard.tiktok_go_video_transactions tgvt
+        LEFT JOIN public.creator_registry cr ON tgvt.author_id = cr.tiktok_id
+        LEFT JOIN public.agency_map am ON cr.agency_id = am.id
+        LEFT JOIN target.agency_target aat ON am.id = aat.agency_id AND tgvt.industry_source = aat.industry
+        WHERE 1=1
+    """
+    params = []
+
+    if agency_id:
+        sql += " AND am.id = %s"
+        params.append(agency_id)
+
+    if industry:
+        sql += " AND tgvt.industry_source = %s"
+        params.append(industry)
+
+    sql += """
+        GROUP BY am.agency_name, tgvt.industry_source, aat.target_number,
+                 aat.week_1, aat.week_2, aat.week_3, aat.week_4, tgvt.report_week
+        ORDER BY am.agency_name, tgvt.industry_source, tgvt.report_week
+    """
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def fetch_agency_target_summary(agency_id: int = None) -> list:
+    """
+    Fetch summary of actual vs target by agency and industry.
+    Aggregates across all weeks.
+    """
+    sql = """
+        SELECT
+            am.agency_name,
+            tgvt.industry_source,
+            COALESCE(aat.target_number, 0) as target_total,
+            COALESCE(aat.week_1, 0) as target_week_1,
+            COALESCE(aat.week_2, 0) as target_week_2,
+            COALESCE(aat.week_3, 0) as target_week_3,
+            COALESCE(aat.week_4, 0) as target_week_4,
+            CASE WHEN tgvt.report_week = 1 THEN COUNT(*) ELSE 0 END as actual_week_1,
+            CASE WHEN tgvt.report_week = 2 THEN COUNT(*) ELSE 0 END as actual_week_2,
+            CASE WHEN tgvt.report_week = 3 THEN COUNT(*) ELSE 0 END as actual_week_3,
+            CASE WHEN tgvt.report_week = 4 THEN COUNT(*) ELSE 0 END as actual_week_4,
+            COUNT(*) as actual_total
+        FROM leaderboard.tiktok_go_video_transactions tgvt
+        LEFT JOIN public.creator_registry cr ON tgvt.author_id = cr.tiktok_id
+        LEFT JOIN public.agency_map am ON cr.agency_id = am.id
+        LEFT JOIN target.agency_target aat ON am.id = aat.agency_id AND tgvt.industry_source = aat.industry
+        WHERE 1=1
+    """
+    params = []
+
+    if agency_id:
+        sql += " AND am.id = %s"
+        params.append(agency_id)
+
+    sql += """
+        GROUP BY am.agency_name, tgvt.industry_source, aat.target_number,
+                 aat.week_1, aat.week_2, aat.week_3, aat.week_4
+        ORDER BY am.agency_name, tgvt.industry_source
+    """
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
