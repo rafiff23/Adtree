@@ -3,13 +3,14 @@ from creator_list import render as creator_list_page
 from content_submission import render as content_submission_page
 from voucherpage import render as voucher_page
 from onboarding import render as onboarding_page
+from agency_target_page import render as agency_target_page
 from settings import render as settings_page
 
 st.set_page_config(page_title="Adtree Dashboard", layout="wide")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Creator List", "Content Submissions", "Voucher Import", "Onboarding Import", "Settings"],
+    ["Creator List", "Content Submissions", "Voucher Import", "Onboarding Import", "Agency Target", "Settings"],
 )
 
 if page == "Creator List":
@@ -23,6 +24,9 @@ elif page == "Voucher Import":
 
 elif page == "Onboarding Import":
     onboarding_page()
+
+elif page == "Agency Target":
+    agency_target_page()
 
 elif page == "Settings":
     settings_page()

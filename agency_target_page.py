@@ -1,0 +1,215 @@
+import streamlit as st
+import pandas as pd
+from db import (
+    fetch_all_agencies,
+    fetch_agency_targets,
+    upsert_agency_target,
+    delete_agency_target,
+)
+
+
+def render():
+    """Render the Agency Target page"""
+    st.title("Agency Target Management")
+    st.write("Manage and track industry targets for each agency by week.")
+
+    # Fetch agencies and targets
+    agencies = fetch_all_agencies()
+    agency_dict = {agency["agency_name"]: agency["id"] for agency in agencies}
+    agency_options = sorted(list(agency_dict.keys()))
+
+    all_targets = fetch_agency_targets()
+
+    # Create two columns: form and view
+    col1, col2 = st.columns([1, 2])
+
+    # ============== LEFT COLUMN: FORM ==============
+    with col1:
+        st.subheader("Add/Edit Target")
+
+        with st.form("agency_target_form", clear_on_submit=True):
+            # Select Agency
+            selected_agency = st.selectbox(
+                "Agency Name *",
+                options=agency_options,
+                help="Select the agency to set targets for",
+            )
+
+            # Industry input
+            industry = st.text_input(
+                "Industry *",
+                placeholder="e.g., Accom, Things to Do, Dining",
+                help="Enter the industry or category name",
+            )
+
+            # Target Number
+            target_number = st.number_input(
+                "Number Target *",
+                min_value=0,
+                step=1,
+                help="Total target for this industry",
+            )
+
+            # Weekly Targets
+            st.write("**Weekly Targets:**")
+            col_w1, col_w2, col_w3, col_w4 = st.columns(4)
+
+            with col_w1:
+                week_1 = st.number_input("Week 1", min_value=0, step=1, key="w1")
+
+            with col_w2:
+                week_2 = st.number_input("Week 2", min_value=0, step=1, key="w2")
+
+            with col_w3:
+                week_3 = st.number_input("Week 3", min_value=0, step=1, key="w3")
+
+            with col_w4:
+                week_4 = st.number_input("Week 4", min_value=0, step=1, key="w4")
+
+            submitted = st.form_submit_button("Save Target", use_container_width=True)
+
+            if submitted:
+                if not industry.strip():
+                    st.error("Industry is required.")
+                    st.stop()
+
+                if target_number <= 0:
+                    st.error("Number Target must be greater than 0.")
+                    st.stop()
+
+                try:
+                    agency_id = agency_dict[selected_agency]
+                    target_id = upsert_agency_target(
+                        agency_id=agency_id,
+                        industry=industry.strip(),
+                        target_number=int(target_number),
+                        week_1=int(week_1),
+                        week_2=int(week_2),
+                        week_3=int(week_3),
+                        week_4=int(week_4),
+                    )
+                    st.success(f"Target saved successfully! ID: {target_id}")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error saving target: {e}")
+
+    # ============== RIGHT COLUMN: VIEW ==============
+    with col2:
+        st.subheader("All Targets")
+
+        if all_targets:
+            # Prepare data for display
+            display_data = []
+            for target in all_targets:
+                display_data.append({
+                    "ID": target["id"],
+                    "Agency": target["agency_name"],
+                    "Industry": target["industry"],
+                    "Target": target["target_number"],
+                    "Week 1": target["week_1"],
+                    "Week 2": target["week_2"],
+                    "Week 3": target["week_3"],
+                    "Week 4": target["week_4"],
+                })
+
+            df = pd.DataFrame(display_data)
+
+            # Display table
+            st.dataframe(
+                df.drop("ID", axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # Delete functionality
+            st.write("---")
+            st.write("**Delete Target:**")
+
+            col_del1, col_del2 = st.columns([2, 1])
+            with col_del1:
+                target_to_delete = st.selectbox(
+                    "Select target to delete",
+                    options=[
+                        f"{t['Agency']} - {t['Industry']} (Target: {t['Target']})"
+                        for t in display_data
+                    ],
+                    key="delete_select",
+                )
+
+            with col_del2:
+                if st.button("Delete", use_container_width=True, type="secondary"):
+                    # Find the ID of the selected target
+                    selected_idx = [
+                        f"{t['Agency']} - {t['Industry']} (Target: {t['Target']})"
+                        for t in display_data
+                    ].index(target_to_delete)
+                    target_id = display_data[selected_idx]["ID"]
+
+                    try:
+                        delete_agency_target(target_id)
+                        st.success("Target deleted successfully!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error deleting target: {e}")
+        else:
+            st.info("No targets found. Add one to get started!")
+
+    # Filter by Agency Section
+    st.divider()
+    st.subheader("View by Agency")
+
+    selected_filter_agency = st.selectbox(
+        "Filter by Agency",
+        options=["All Agencies"] + agency_options,
+        key="filter_agency",
+    )
+
+    if selected_filter_agency == "All Agencies":
+        filtered_targets = all_targets
+    else:
+        agency_id = agency_dict[selected_filter_agency]
+        filtered_targets = fetch_agency_targets(agency_id)
+
+    if filtered_targets:
+        # Prepare filtered data
+        filtered_data = []
+        for target in filtered_targets:
+            filtered_data.append({
+                "Agency": target["agency_name"],
+                "Industry": target["industry"],
+                "Target": target["target_number"],
+                "Week 1": target["week_1"],
+                "Week 2": target["week_2"],
+                "Week 3": target["week_3"],
+                "Week 4": target["week_4"],
+                "Total": target["week_1"] + target["week_2"] + target["week_3"] + target["week_4"],
+            })
+
+        df_filtered = pd.DataFrame(filtered_data)
+
+        # Display metrics
+        if selected_filter_agency != "All Agencies":
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            total_target = df_filtered["Target"].sum()
+            total_weekly = df_filtered["Total"].sum()
+            avg_target_per_industry = total_target / len(df_filtered) if len(df_filtered) > 0 else 0
+
+            with col_m1:
+                st.metric("Total Industries", len(df_filtered))
+            with col_m2:
+                st.metric("Total Target", total_target)
+            with col_m3:
+                st.metric("Total Weekly", total_weekly)
+            with col_m4:
+                st.metric("Avg per Industry", f"{avg_target_per_industry:.0f}")
+
+        # Display table
+        st.dataframe(
+            df_filtered,
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(f"No targets found for {selected_filter_agency}.")

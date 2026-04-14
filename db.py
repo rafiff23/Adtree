@@ -699,3 +699,93 @@ def save_content_qc_review(post_id: str, qc_data: dict, username: str, expected_
         return True, "ok"
     finally:
         conn.close()
+
+
+# =====================================================
+# AGENCY TARGET
+# =====================================================
+
+def fetch_all_agencies():
+    """Fetch all agencies from public.agency_map"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, agency_name FROM public.agency_map ORDER BY agency_name")
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def fetch_agency_targets(agency_id: int = None) -> list:
+    """Fetch agency targets, optionally filtered by agency_id"""
+    sql = """
+        SELECT
+            at.id,
+            at.agency_id,
+            am.agency_name,
+            at.industry,
+            at.target_number,
+            at.week_1,
+            at.week_2,
+            at.week_3,
+            at.week_4,
+            at.created_at,
+            at.updated_at
+        FROM target.agency_target at
+        JOIN public.agency_map am ON at.agency_id = am.id
+        WHERE 1=1
+    """
+    params = []
+
+    if agency_id:
+        sql += " AND at.agency_id = %s"
+        params.append(agency_id)
+
+    sql += " ORDER BY am.agency_name, at.industry"
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def upsert_agency_target(agency_id: int, industry: str, target_number: int, week_1: int, week_2: int, week_3: int, week_4: int):
+    """Insert or update an agency target"""
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO target.agency_target (agency_id, industry, target_number, week_1, week_2, week_3, week_4, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (agency_id, industry)
+                    DO UPDATE SET
+                        target_number = EXCLUDED.target_number,
+                        week_1 = EXCLUDED.week_1,
+                        week_2 = EXCLUDED.week_2,
+                        week_3 = EXCLUDED.week_3,
+                        week_4 = EXCLUDED.week_4,
+                        updated_at = NOW()
+                    RETURNING id
+                    """,
+                    (agency_id, industry, target_number, week_1, week_2, week_3, week_4)
+                )
+                result = cur.fetchone()
+                return result["id"] if result else None
+    finally:
+        conn.close()
+
+
+def delete_agency_target(target_id: int):
+    """Delete an agency target by ID"""
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM target.agency_target WHERE id = %s", (target_id,))
+    finally:
+        conn.close()
