@@ -6,6 +6,8 @@ from db import (
     upsert_agency_target,
     delete_agency_target,
     fetch_distinct_industries,
+    get_agency_target_by_id,
+    update_agency_target,
 )
 
 
@@ -30,11 +32,33 @@ def render():
     with col1:
         st.subheader("Add/Edit Target")
 
-        with st.form("agency_target_form", clear_on_submit=True):
+        # Mode selector
+        mode = st.radio("Mode", options=["Add New", "Edit Existing"], horizontal=True)
+
+        # For edit mode, select which target to edit
+        edit_target = None
+        if mode == "Edit Existing":
+            if all_targets:
+                target_options = [
+                    f"{t['agency_name']} - {t['industry']} (Target: {t['target_number']})"
+                    for t in all_targets
+                ]
+                selected_edit = st.selectbox("Select target to edit", options=target_options, key="edit_select")
+
+                # Find the selected target
+                selected_idx = target_options.index(selected_edit)
+                edit_target = all_targets[selected_idx]
+            else:
+                st.warning("No targets available to edit.")
+                edit_target = None
+
+        with st.form("agency_target_form", clear_on_submit=mode == "Add New"):
             # Select Agency
             selected_agency = st.selectbox(
                 "Agency Name *",
                 options=agency_options,
+                value=edit_target["agency_name"] if edit_target else agency_options[0],
+                disabled=mode == "Edit Existing",
                 help="Select the agency to set targets for",
             )
 
@@ -43,6 +67,8 @@ def render():
                 industry = st.selectbox(
                     "Industry *",
                     options=industries,
+                    value=edit_target["industry"] if edit_target else industries[0],
+                    disabled=mode == "Edit Existing",
                     help="Select the industry or category",
                 )
             else:
@@ -54,6 +80,7 @@ def render():
                 "Number Target *",
                 min_value=0,
                 step=1,
+                value=int(edit_target["target_number"]) if edit_target else 0,
                 help="Total target for this industry",
             )
 
@@ -62,18 +89,19 @@ def render():
             col_w1, col_w2, col_w3, col_w4 = st.columns(4)
 
             with col_w1:
-                week_1 = st.number_input("Week 1", min_value=0, step=1, key="w1")
+                week_1 = st.number_input("Week 1", min_value=0, step=1, key="w1", value=int(edit_target["week_1"]) if edit_target else 0)
 
             with col_w2:
-                week_2 = st.number_input("Week 2", min_value=0, step=1, key="w2")
+                week_2 = st.number_input("Week 2", min_value=0, step=1, key="w2", value=int(edit_target["week_2"]) if edit_target else 0)
 
             with col_w3:
-                week_3 = st.number_input("Week 3", min_value=0, step=1, key="w3")
+                week_3 = st.number_input("Week 3", min_value=0, step=1, key="w3", value=int(edit_target["week_3"]) if edit_target else 0)
 
             with col_w4:
-                week_4 = st.number_input("Week 4", min_value=0, step=1, key="w4")
+                week_4 = st.number_input("Week 4", min_value=0, step=1, key="w4", value=int(edit_target["week_4"]) if edit_target else 0)
 
-            submitted = st.form_submit_button("Save Target", use_container_width=True)
+            button_label = "Update Target" if mode == "Edit Existing" else "Save Target"
+            submitted = st.form_submit_button(button_label, use_container_width=True)
 
             if submitted:
                 if not industries:
@@ -89,17 +117,33 @@ def render():
                     st.stop()
 
                 try:
-                    agency_id = agency_dict[selected_agency]
-                    target_id = upsert_agency_target(
-                        agency_id=agency_id,
-                        industry=industry,
-                        target_number=int(target_number),
-                        week_1=int(week_1),
-                        week_2=int(week_2),
-                        week_3=int(week_3),
-                        week_4=int(week_4),
-                    )
-                    st.success(f"Target saved successfully! ID: {target_id}")
+                    if mode == "Edit Existing":
+                        if not edit_target:
+                            st.error("Please select a target to edit.")
+                            st.stop()
+
+                        update_agency_target(
+                            target_id=edit_target["id"],
+                            target_number=int(target_number),
+                            week_1=int(week_1),
+                            week_2=int(week_2),
+                            week_3=int(week_3),
+                            week_4=int(week_4),
+                        )
+                        st.success(f"Target updated successfully! ID: {edit_target['id']}")
+                    else:
+                        agency_id = agency_dict[selected_agency]
+                        target_id = upsert_agency_target(
+                            agency_id=agency_id,
+                            industry=industry,
+                            target_number=int(target_number),
+                            week_1=int(week_1),
+                            week_2=int(week_2),
+                            week_3=int(week_3),
+                            week_4=int(week_4),
+                        )
+                        st.success(f"Target saved successfully! ID: {target_id}")
+
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:

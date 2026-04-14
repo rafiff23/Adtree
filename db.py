@@ -793,6 +793,57 @@ def upsert_agency_target(agency_id: int, industry: str, target_number: int, week
         conn.close()
 
 
+def get_agency_target_by_id(target_id: int):
+    """Get a single agency target by ID"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    at.id,
+                    at.agency_id,
+                    am.agency_name,
+                    at.industry,
+                    at.target_number,
+                    at.week_1,
+                    at.week_2,
+                    at.week_3,
+                    at.week_4
+                FROM target.agency_target at
+                JOIN public.agency_map am ON at.agency_id = am.id
+                WHERE at.id = %s
+                """,
+                (target_id,)
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def update_agency_target(target_id: int, target_number: int, week_1: int, week_2: int, week_3: int, week_4: int):
+    """Update an existing agency target"""
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE target.agency_target
+                    SET target_number = %s,
+                        week_1 = %s,
+                        week_2 = %s,
+                        week_3 = %s,
+                        week_4 = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (target_number, week_1, week_2, week_3, week_4, target_id)
+                )
+    finally:
+        conn.close()
+
+
 def delete_agency_target(target_id: int):
     """Delete an agency target by ID"""
     conn = get_connection()
