@@ -5,6 +5,7 @@ from db import (
     fetch_agency_targets,
     upsert_agency_target,
     delete_agency_target,
+    fetch_distinct_industries,
 )
 
 
@@ -13,10 +14,12 @@ def render():
     st.title("Agency Target Management")
     st.write("Manage and track industry targets for each agency by week.")
 
-    # Fetch agencies and targets
+    # Fetch agencies, industries, and targets
     agencies = fetch_all_agencies()
     agency_dict = {agency["agency_name"]: agency["id"] for agency in agencies}
     agency_options = sorted(list(agency_dict.keys()))
+
+    industries = fetch_distinct_industries()
 
     all_targets = fetch_agency_targets()
 
@@ -35,12 +38,16 @@ def render():
                 help="Select the agency to set targets for",
             )
 
-            # Industry input
-            industry = st.text_input(
-                "Industry *",
-                placeholder="e.g., Accom, Things to Do, Dining",
-                help="Enter the industry or category name",
-            )
+            # Select Industry
+            if industries:
+                industry = st.selectbox(
+                    "Industry *",
+                    options=industries,
+                    help="Select the industry or category",
+                )
+            else:
+                st.warning("No industries found in the database. Please ensure leaderboard.tiktok_go_video_summary has data.")
+                industry = None
 
             # Target Number
             target_number = st.number_input(
@@ -69,7 +76,11 @@ def render():
             submitted = st.form_submit_button("Save Target", use_container_width=True)
 
             if submitted:
-                if not industry.strip():
+                if not industries:
+                    st.error("No industries available. Please check the database.")
+                    st.stop()
+
+                if not industry:
                     st.error("Industry is required.")
                     st.stop()
 
@@ -81,7 +92,7 @@ def render():
                     agency_id = agency_dict[selected_agency]
                     target_id = upsert_agency_target(
                         agency_id=agency_id,
-                        industry=industry.strip(),
+                        industry=industry,
                         target_number=int(target_number),
                         week_1=int(week_1),
                         week_2=int(week_2),

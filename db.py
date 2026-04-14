@@ -716,6 +716,19 @@ def fetch_all_agencies():
         conn.close()
 
 
+def fetch_distinct_industries():
+    """Fetch distinct industries from leaderboard.tiktok_go_video_summary"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT industry_source FROM leaderboard.tiktok_go_video_summary WHERE industry_source IS NOT NULL ORDER BY industry_source"
+            )
+            return [row["industry_source"] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def fetch_agency_targets(agency_id: int = None) -> list:
     """Fetch agency targets, optionally filtered by agency_id"""
     sql = """
