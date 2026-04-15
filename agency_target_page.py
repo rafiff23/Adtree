@@ -54,20 +54,22 @@ def render():
 
         with st.form("agency_target_form", clear_on_submit=mode == "Add New"):
             # Select Agency
+            agency_index = agency_options.index(edit_target["agency_name"]) if edit_target else 0
             selected_agency = st.selectbox(
                 "Agency Name *",
                 options=agency_options,
-                value=edit_target["agency_name"] if edit_target else agency_options[0],
+                index=agency_index,
                 disabled=mode == "Edit Existing",
                 help="Select the agency to set targets for",
             )
 
             # Select Industry
             if industries:
+                industry_index = industries.index(edit_target["industry"]) if edit_target else 0
                 industry = st.selectbox(
                     "Industry *",
                     options=industries,
-                    value=edit_target["industry"] if edit_target else industries[0],
+                    index=industry_index,
                     disabled=mode == "Edit Existing",
                     help="Select the industry or category",
                 )
