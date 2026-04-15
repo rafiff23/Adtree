@@ -96,7 +96,63 @@ curl -H "X-API-Key: your-secret-api-key" \
 
 ---
 
-### 3. Health Check
+### 3. Bulk Export (All Creators - No Pagination)
+**GET** `/api/creators/export`
+
+**Headers:**
+```
+X-API-Key: your-secret-api-key
+```
+
+**Query Parameters:**
+- `format` (string, default: "json") - "json" or "csv"
+- `agency_id` (int, optional) - Filter by agency
+- `binding_status` (string, optional) - "Bound" or "Unbound"
+
+**Example - JSON Export:**
+```bash
+curl -H "X-API-Key: your-secret-api-key" \
+  "http://localhost:8000/api/creators/export?format=json&agency_id=1"
+```
+
+**Example - CSV Export:**
+```bash
+curl -H "X-API-Key: your-secret-api-key" \
+  "http://localhost:8000/api/creators/export?format=csv" \
+  -o creators_backup.csv
+```
+
+**JSON Response:**
+```json
+{
+  "success": true,
+  "count": 3216,
+  "format": "json",
+  "exported_at": "2026-04-15T12:34:56.789123",
+  "data": [
+    {
+      "id": 1,
+      "tiktok_id": "creator_username",
+      "followers": 10000,
+      "agency_name": "Adtree Digital Indonesia",
+      ...
+    }
+  ]
+}
+```
+
+**CSV Response:**
+```
+id,tiktok_id,followers,full_name,domicile,...
+1,creator_username,10000,Creator Name,Jakarta,...
+2,another_creator,5000,Another Name,Surabaya,...
+```
+
+Downloaded as: `creators_export_20260415_123456.csv`
+
+---
+
+### 5. Health Check
 **GET** `/api/health`
 
 No authentication required.
@@ -111,7 +167,7 @@ No authentication required.
 
 ---
 
-### 4. API Documentation
+### 6. API Documentation
 **GET** `/api/docs`
 
 No authentication required. Returns full API documentation.
