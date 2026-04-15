@@ -74,22 +74,24 @@ def get_all_creators():
         # Build the query
         sql = """
             SELECT
-                id,
-                tiktok_id,
-                followers,
-                full_name,
-                domicile,
-                uid,
-                phone_number,
-                tiktok_link,
-                binding_status,
-                onboarding_date,
-                month_label,
-                level,
-                agency_id,
-                created_at,
-                updated_at
-            FROM public.creator_registry
+                cr.id,
+                cr.tiktok_id,
+                cr.followers,
+                cr.full_name,
+                cr.domicile,
+                cr.uid,
+                cr.phone_number,
+                cr.tiktok_link,
+                cr.binding_status,
+                cr.onboarding_date,
+                cr.month_label,
+                cr.level,
+                cr.agency_id,
+                am.agency_name,
+                cr.created_at,
+                cr.updated_at
+            FROM public.creator_registry cr
+            LEFT JOIN public.agency_map am ON cr.agency_id = am.id
             WHERE 1=1
         """
         params = []
@@ -116,7 +118,7 @@ def get_all_creators():
         total_count = cur.fetchone()["total"]
 
         # Add pagination
-        sql += " ORDER BY id DESC LIMIT %s OFFSET %s"
+        sql += " ORDER BY cr.id DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         cur.execute(sql, params)
@@ -154,24 +156,26 @@ def get_creators_by_agency(agency_id):
 
         sql = """
             SELECT
-                id,
-                tiktok_id,
-                followers,
-                full_name,
-                domicile,
-                uid,
-                phone_number,
-                tiktok_link,
-                binding_status,
-                onboarding_date,
-                month_label,
-                level,
-                agency_id,
-                created_at,
-                updated_at
-            FROM public.creator_registry
-            WHERE agency_id = %s
-            ORDER BY id DESC
+                cr.id,
+                cr.tiktok_id,
+                cr.followers,
+                cr.full_name,
+                cr.domicile,
+                cr.uid,
+                cr.phone_number,
+                cr.tiktok_link,
+                cr.binding_status,
+                cr.onboarding_date,
+                cr.month_label,
+                cr.level,
+                cr.agency_id,
+                am.agency_name,
+                cr.created_at,
+                cr.updated_at
+            FROM public.creator_registry cr
+            LEFT JOIN public.agency_map am ON cr.agency_id = am.id
+            WHERE cr.agency_id = %s
+            ORDER BY cr.id DESC
             LIMIT %s OFFSET %s
         """
 
