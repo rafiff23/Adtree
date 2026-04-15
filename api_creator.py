@@ -1,0 +1,254 @@
+"""
+API endpoint for fetching creator registry data.
+External clients can query all creators or filter by agency.
+"""
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import os
+import psycopg2
+import psycopg2.extras
+from functools import wraps
+
+app = Flask(__name__)
+CORS(app)
+
+# Database configuration
+DB_HOST = os.getenv("PG_HOST", "localhost")
+DB_PORT = os.getenv("PG_PORT", "5432")
+DB_NAME = os.getenv("PG_DB", "adtree")
+DB_USER = os.getenv("PG_USER", "postgres")
+DB_PASSWORD = os.getenv("PG_PASSWORD", "4dtr33")
+
+# API Key for authentication (set via environment variable)
+API_KEY = os.getenv("API_KEY", "default-api-key-change-in-production")
+
+
+def get_connection():
+    """Create a database connection."""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        cursor_factory=psycopg2.extras.RealDictCursor,
+    )
+
+
+def require_api_key(f):
+    """Decorator to require API key authentication."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get("X-API-Key")
+        if not api_key or api_key != API_KEY:
+            return jsonify({"error": "Unauthorized: Invalid or missing API key"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route("/api/creators", methods=["GET"])
+@require_api_key
+def get_all_creators():
+    """
+    Fetch all creators from public.creator_registry.
+
+    Optional query parameters:
+    - agency_id: Filter by agency ID
+    - limit: Number of records (default: 1000, max: 10000)
+    - offset: Pagination offset (default: 0)
+    - binding_status: Filter by "Bound" or "Unbound"
+
+    Example: /api/creators?agency_id=1&limit=100&offset=0
+    """
+    try:
+        # Get query parameters
+        agency_id = request.args.get("agency_id", type=int)
+        limit = min(int(request.args.get("limit", 1000)), 10000)  # Max 10000
+        offset = int(request.args.get("offset", 0))
+        binding_status = request.args.get("binding_status")
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Build the query
+        sql = """
+            SELECT
+                id,
+                tiktok_id,
+                followers,
+                full_name,
+                domicile,
+                uid,
+                phone_number,
+                tiktok_link,
+                binding_status,
+                onboarding_date,
+                month_label,
+                level,
+                agency_id,
+                created_at,
+                updated_at
+            FROM public.creator_registry
+            WHERE 1=1
+        """
+        params = []
+
+        if agency_id:
+            sql += " AND agency_id = %s"
+            params.append(agency_id)
+
+        if binding_status:
+            sql += " AND binding_status = %s"
+            params.append(binding_status)
+
+        # Get total count
+        count_sql = "SELECT COUNT(*) as total FROM public.creator_registry WHERE 1=1"
+        count_params = []
+        if agency_id:
+            count_sql += " AND agency_id = %s"
+            count_params.append(agency_id)
+        if binding_status:
+            count_sql += " AND binding_status = %s"
+            count_params.append(binding_status)
+
+        cur.execute(count_sql, count_params)
+        total_count = cur.fetchone()["total"]
+
+        # Add pagination
+        sql += " ORDER BY id DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        cur.execute(sql, params)
+        creators = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "count": len(creators),
+            "data": [dict(row) for row in creators],
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/creators/by-agency/<int:agency_id>", methods=["GET"])
+@require_api_key
+def get_creators_by_agency(agency_id):
+    """
+    Fetch all creators for a specific agency.
+
+    Example: /api/creators/by-agency/1
+    """
+    try:
+        limit = min(int(request.args.get("limit", 1000)), 10000)
+        offset = int(request.args.get("offset", 0))
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        sql = """
+            SELECT
+                id,
+                tiktok_id,
+                followers,
+                full_name,
+                domicile,
+                uid,
+                phone_number,
+                tiktok_link,
+                binding_status,
+                onboarding_date,
+                month_label,
+                level,
+                agency_id,
+                created_at,
+                updated_at
+            FROM public.creator_registry
+            WHERE agency_id = %s
+            ORDER BY id DESC
+            LIMIT %s OFFSET %s
+        """
+
+        # Get total count
+        count_sql = "SELECT COUNT(*) as total FROM public.creator_registry WHERE agency_id = %s"
+        cur.execute(count_sql, (agency_id,))
+        total_count = cur.fetchone()["total"]
+
+        cur.execute(sql, (agency_id, limit, offset))
+        creators = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "agency_id": agency_id,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "count": len(creators),
+            "data": [dict(row) for row in creators],
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """Health check endpoint (no auth required)."""
+    return jsonify({"status": "ok", "service": "Creator Registry API"})
+
+
+@app.route("/api/docs", methods=["GET"])
+def docs():
+    """API documentation."""
+    return jsonify({
+        "service": "Creator Registry API",
+        "version": "1.0",
+        "endpoints": [
+            {
+                "path": "/api/creators",
+                "method": "GET",
+                "auth": "Required (X-API-Key header)",
+                "description": "Fetch all creators with optional filters",
+                "parameters": {
+                    "agency_id": "integer (optional)",
+                    "binding_status": "string: 'Bound' or 'Unbound' (optional)",
+                    "limit": "integer, default 1000, max 10000",
+                    "offset": "integer, default 0"
+                }
+            },
+            {
+                "path": "/api/creators/by-agency/<agency_id>",
+                "method": "GET",
+                "auth": "Required (X-API-Key header)",
+                "description": "Fetch creators for a specific agency",
+                "parameters": {
+                    "limit": "integer, default 1000, max 10000",
+                    "offset": "integer, default 0"
+                }
+            },
+            {
+                "path": "/api/health",
+                "method": "GET",
+                "auth": "Not required",
+                "description": "Health check"
+            },
+            {
+                "path": "/api/docs",
+                "method": "GET",
+                "auth": "Not required",
+                "description": "This documentation"
+            }
+        ]
+    })
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, debug=False)
