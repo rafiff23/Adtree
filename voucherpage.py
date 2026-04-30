@@ -5,173 +5,206 @@ from psycopg2.extras import execute_values
 from db import get_connection
 
 # ======================================================
-# CONFIG
-# ======================================================
-
-SCHEMA_NAME = "voucher_campaign"
-TABLE_NAME = "campaign_registrations"
-
-REQUIRED_COLS = [
-    "Username",
-    "Nomor Telpon",
-    "Lokasi Outlet",
-    "Code Voucher Oden",
-    "Code Voucher Tea Series",
-    "Code Voucher Matcha Series"
-]
-
-def full_table():
-    return f"{SCHEMA_NAME}.{TABLE_NAME}"
-
-# ======================================================
-# CLEANERS
+# HELPERS
 # ======================================================
 
 def clean_phone(v):
-    if pd.isna(v):
+    if pd.isna(v) if isinstance(v, float) else not v:
         return None
-
-    s = str(v).strip()
-    s = re.sub(r"\D", "", s)
-
+    s = re.sub(r"\D", "", str(v).strip())
     if s.startswith("62"):
         s = "0" + s[2:]
     elif s.startswith("8"):
         s = "0" + s
-
-    if s == "":
-        return None
-
-    return s
+    return s or None
 
 
 def clean_text(v):
-    if pd.isna(v):
+    if pd.isna(v) if isinstance(v, float) else v is None:
         return None
     s = str(v).strip()
-    if s == "" or s == ".":
-        return None
-    return s
+    return None if s in ("", ".") else s
 
 
 def pick_col(df, name):
-    name = name.strip().lower()
-
+    kw = name.strip().lower()
     for col in df.columns:
-        col_clean = re.sub(r"\s+", " ", col.lower()).strip()
-        if name in col_clean:
+        if kw in re.sub(r"\s+", " ", col.lower()).strip():
             return col
+    raise ValueError(f"Kolom yang mengandung '{name}' tidak ditemukan.")
 
-    raise ValueError(f"Missing required column: {name}")
 
-
-# ======================================================
-# NORMALIZER
-# ======================================================
-
-def normalize(df):
-    out = pd.DataFrame()
-
-    out["username"] = df[pick_col(df, "Username")].apply(clean_text)
-    out["nomor_telpon"] = df[pick_col(df, "Nomor Telpon")].apply(clean_phone)
-    out["lokasi_outlet"] = df[pick_col(df, "Lokasi Outlet")].apply(clean_text)
-    out["code_voucher_oden"] = df[pick_col(df, "Code Voucher Oden")].apply(clean_text)
-    out["code_voucher_tea_series"] = df[pick_col(df, "Code Voucher Tea Series")].apply(clean_text)
-    out["code_voucher_matcha_series"] = df[pick_col(df, "Code Voucher Matcha Series")].apply(clean_text)
-
-    return out
+def to_rows(df):
+    return [
+        tuple(None if (isinstance(x, float) and pd.isna(x)) else x for x in r)
+        for r in df.to_numpy()
+    ]
 
 
 # ======================================================
-# DDL
+# PAGE CONFIG
 # ======================================================
 
-def ensure_table(cur):
-    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME};")
+st.set_page_config(page_title="Voucher Import", page_icon="🎟️")
 
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {full_table()} (
-            username TEXT,
-            nomor_telpon TEXT,
-            lokasi_outlet TEXT,
-            code_voucher_oden TEXT,
-            code_voucher_tea_series TEXT,
-            code_voucher_matcha_series TEXT,
-            imported_at TIMESTAMPTZ DEFAULT NOW(),
-            last_updated TIMESTAMPTZ DEFAULT NOW()
-        );
-    """)
+PAGES = [
+    "⚙️ Import Voucher – Beanspot",
+    "⚙️ Import Voucher – LAWSON Kyoto Oden",
+]
+
+with st.sidebar:
+    st.markdown("### 🎟️ Voucher Import")
+    page = st.radio("Pilih campaign:", PAGES, label_visibility="collapsed")
 
 
-# ======================================================
-# UI
-# ======================================================
+# ══════════════════════════════════════════════════════════
+# PAGE 1 — BEANSPOT IMPORT
+# ══════════════════════════════════════════════════════════
+if page == PAGES[0]:
+    st.title("🎟️ Import Voucher – Beanspot")
 
-def render():
-    st.set_page_config(page_title="Voucher Import", page_icon="🎟️")
-    st.title("🎟️ Voucher Campaign Import")
-
-    uploaded = st.file_uploader("Upload Voucher CSV", type=["csv"])
-
+    uploaded = st.file_uploader("Upload CSV Beanspot", type=["csv"])
     if uploaded is None:
-        st.info("Upload a CSV file to begin.")
+        st.info("Upload file CSV untuk memulai.")
         st.stop()
-    
+
     df = pd.read_csv(uploaded)
-    df.columns = df.columns.str.replace('\n', ' ', regex=False)
-    df.columns = df.columns.str.strip()
+    df.columns = df.columns.str.replace("\n", " ", regex=False).str.strip()
 
     st.subheader("Raw Preview")
     st.dataframe(df.head(20), use_container_width=True)
 
-    # Normalize
     try:
-        df_norm = normalize(df)
+        norm = pd.DataFrame({
+            "username":                  df[pick_col(df, "username")].apply(clean_text),
+            "nomor_telpon":              df[pick_col(df, "nomor telpon")].apply(clean_phone),
+            "lokasi_outlet":             df[pick_col(df, "lokasi outlet")].apply(clean_text),
+            "code_voucher_oden":         df[pick_col(df, "code voucher oden")].apply(clean_text),
+            "code_voucher_tea_series":   df[pick_col(df, "code voucher tea")].apply(clean_text),
+            "code_voucher_matcha_series":df[pick_col(df, "code voucher matcha")].apply(clean_text),
+        })
+        norm["username"] = norm["username"].str.strip().str.lower()
     except Exception as e:
-        st.error(f"Normalization failed: {e}")
+        st.error(f"Normalisasi gagal: {e}")
         st.stop()
 
     st.subheader("Normalized Preview")
-    st.dataframe(df_norm.head(20), use_container_width=True)
-    st.caption(f"Rows to insert: {len(df_norm):,}")
+    st.dataframe(norm.head(20), use_container_width=True)
+    st.caption(f"Total rows: {len(norm):,}")
 
-    clear_first = st.checkbox("Clear table first (TRUNCATE)", value=True)
+    clear_first = st.checkbox("TRUNCATE tabel sebelum import", value=True)
 
-    if st.button("🚀 Import to Database", type="primary"):
-
+    if st.button("🚀 Import ke Database", type="primary"):
         conn = get_connection()
-
         try:
             with conn:
                 with conn.cursor() as cur:
-
-                    ensure_table(cur)
-
+                    cur.execute("CREATE SCHEMA IF NOT EXISTS voucher_campaign;")
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS voucher_campaign.campaign_registrations (
+                            username TEXT,
+                            nomor_telpon TEXT,
+                            lokasi_outlet TEXT,
+                            code_voucher_oden TEXT,
+                            code_voucher_tea_series TEXT,
+                            code_voucher_matcha_series TEXT,
+                            imported_at TIMESTAMPTZ DEFAULT NOW(),
+                            last_updated TIMESTAMPTZ DEFAULT NOW()
+                        );
+                    """)
                     if clear_first:
-                        cur.execute(f"TRUNCATE TABLE {full_table()};")
-
-                    rows = [
-                        tuple(None if pd.isna(x) else x for x in r)
-                        for r in df_norm.to_numpy()
-                    ]
-
+                        cur.execute("TRUNCATE TABLE voucher_campaign.campaign_registrations;")
                     execute_values(
                         cur,
-                        f"""
-                        INSERT INTO {full_table()}
+                        """
+                        INSERT INTO voucher_campaign.campaign_registrations
                         (username, nomor_telpon, lokasi_outlet,
-                        code_voucher_oden, code_voucher_tea_series,
-                        code_voucher_matcha_series)
+                         code_voucher_oden, code_voucher_tea_series, code_voucher_matcha_series)
                         VALUES %s
                         """,
-                        rows,
-                        page_size=5000
+                        to_rows(norm),
+                        page_size=5000,
                     )
-
-            st.success(f"Successfully inserted {len(df_norm):,} rows.")
-
+            st.success(f"Berhasil import {len(norm):,} rows.")
         except Exception as e:
-            st.error(f"Import failed: {e}")
+            st.error(f"Import gagal: {e}")
+        finally:
+            conn.close()
 
+
+# ══════════════════════════════════════════════════════════
+# PAGE 2 — LAWSON IMPORT
+# ══════════════════════════════════════════════════════════
+elif page == PAGES[1]:
+    st.title("🎟️ Import Voucher – LAWSON Kyoto Oden")
+    st.markdown("""
+    **Kolom CSV yang dibutuhkan:**
+    Link Akun TikTok · Nama Akun TikTok · Lokasi Outlet · Tanggal Visit · No. Telephone · Kode Voucher Kyoto Oden
+    """)
+
+    uploaded = st.file_uploader("Upload CSV LAWSON Kyoto Oden", type=["csv"])
+    if uploaded is None:
+        st.info("Upload file CSV untuk memulai.")
+        st.stop()
+
+    df = pd.read_csv(uploaded)
+    df.columns = df.columns.str.replace("\n", " ", regex=False).str.strip()
+
+    st.subheader("Raw Preview")
+    st.dataframe(df.head(20), use_container_width=True)
+
+    try:
+        norm = pd.DataFrame({
+            "link_akun_tiktok": df[pick_col(df, "link akun")].apply(clean_text),
+            "username":         df[pick_col(df, "nama akun")].apply(clean_text),
+            "lokasi_outlet":    df[pick_col(df, "lokasi outlet")].apply(clean_text),
+            "tanggal_visit":    df[pick_col(df, "tanggal visit")].apply(clean_text),
+            "nomor_telpon":     df[pick_col(df, "no. telephone")].apply(clean_phone),
+            "kode_voucher_oden":df[pick_col(df, "kode voucher")].apply(clean_text),
+        })
+        norm["username"] = norm["username"].str.strip().str.lower()
+    except Exception as e:
+        st.error(f"Normalisasi gagal: {e}")
+        st.stop()
+
+    st.subheader("Normalized Preview")
+    st.dataframe(norm.head(20), use_container_width=True)
+    st.caption(f"Total rows: {len(norm):,}")
+
+    clear_first = st.checkbox("TRUNCATE tabel sebelum import", value=True)
+
+    if st.button("🚀 Import ke Database", type="primary"):
+        conn = get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("CREATE SCHEMA IF NOT EXISTS voucher_campaign;")
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS voucher_campaign.lawson_kyoto_oden (
+                            link_akun_tiktok TEXT,
+                            username TEXT,
+                            lokasi_outlet TEXT,
+                            tanggal_visit TEXT,
+                            nomor_telpon TEXT,
+                            kode_voucher_oden TEXT,
+                            imported_at TIMESTAMPTZ DEFAULT NOW()
+                        );
+                    """)
+                    if clear_first:
+                        cur.execute("TRUNCATE TABLE voucher_campaign.lawson_kyoto_oden;")
+                    execute_values(
+                        cur,
+                        """
+                        INSERT INTO voucher_campaign.lawson_kyoto_oden
+                        (link_akun_tiktok, username, lokasi_outlet, tanggal_visit,
+                         nomor_telpon, kode_voucher_oden)
+                        VALUES %s
+                        """,
+                        to_rows(norm),
+                        page_size=5000,
+                    )
+            st.success(f"Berhasil import {len(norm):,} rows.")
+        except Exception as e:
+            st.error(f"Import gagal: {e}")
         finally:
             conn.close()
