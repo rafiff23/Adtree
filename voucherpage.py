@@ -42,31 +42,14 @@ def to_rows(df):
 
 
 # ======================================================
-# PAGE CONFIG
+# TABS
 # ======================================================
 
-st.set_page_config(page_title="Voucher Import", page_icon="🎟️")
-
-PAGES = [
-    "⚙️ Import Voucher – Beanspot",
-    "⚙️ Import Voucher – LAWSON Kyoto Oden",
-]
-
-with st.sidebar:
-    st.markdown("### 🎟️ Voucher Import")
-    page = st.radio("Pilih campaign:", PAGES, label_visibility="collapsed")
-
-
-# ══════════════════════════════════════════════════════════
-# PAGE 1 — BEANSPOT IMPORT
-# ══════════════════════════════════════════════════════════
-if page == PAGES[0]:
-    st.title("🎟️ Import Voucher – Beanspot")
-
+def _beanspot_tab():
     uploaded = st.file_uploader("Upload CSV Beanspot", type=["csv"])
     if uploaded is None:
         st.info("Upload file CSV untuk memulai.")
-        st.stop()
+        return
 
     df = pd.read_csv(uploaded)
     df.columns = df.columns.str.replace("\n", " ", regex=False).str.strip()
@@ -86,15 +69,15 @@ if page == PAGES[0]:
         norm["username"] = norm["username"].str.strip().str.lower()
     except Exception as e:
         st.error(f"Normalisasi gagal: {e}")
-        st.stop()
+        return
 
     st.subheader("Normalized Preview")
     st.dataframe(norm.head(20), use_container_width=True)
     st.caption(f"Total rows: {len(norm):,}")
 
-    clear_first = st.checkbox("TRUNCATE tabel sebelum import", value=True)
+    clear_first = st.checkbox("TRUNCATE tabel sebelum import", value=True, key="bs_clear")
 
-    if st.button("🚀 Import ke Database", type="primary"):
+    if st.button("🚀 Import ke Database", type="primary", key="bs_import"):
         conn = get_connection()
         try:
             with conn:
@@ -132,11 +115,7 @@ if page == PAGES[0]:
             conn.close()
 
 
-# ══════════════════════════════════════════════════════════
-# PAGE 2 — LAWSON IMPORT
-# ══════════════════════════════════════════════════════════
-elif page == PAGES[1]:
-    st.title("🎟️ Import Voucher – LAWSON Kyoto Oden")
+def _lawson_tab():
     st.markdown("""
     **Kolom CSV yang dibutuhkan:**
     Link Akun TikTok · Nama Akun TikTok · Lokasi Outlet · Tanggal Visit · No. Telephone · Kode Voucher Kyoto Oden
@@ -145,7 +124,7 @@ elif page == PAGES[1]:
     uploaded = st.file_uploader("Upload CSV LAWSON Kyoto Oden", type=["csv"])
     if uploaded is None:
         st.info("Upload file CSV untuk memulai.")
-        st.stop()
+        return
 
     df = pd.read_csv(uploaded)
     df.columns = df.columns.str.replace("\n", " ", regex=False).str.strip()
@@ -165,15 +144,15 @@ elif page == PAGES[1]:
         norm["username"] = norm["username"].str.strip().str.lower()
     except Exception as e:
         st.error(f"Normalisasi gagal: {e}")
-        st.stop()
+        return
 
     st.subheader("Normalized Preview")
     st.dataframe(norm.head(20), use_container_width=True)
     st.caption(f"Total rows: {len(norm):,}")
 
-    clear_first = st.checkbox("TRUNCATE tabel sebelum import", value=True)
+    clear_first = st.checkbox("TRUNCATE tabel sebelum import", value=True, key="ls_clear")
 
-    if st.button("🚀 Import ke Database", type="primary"):
+    if st.button("🚀 Import ke Database", type="primary", key="ls_import"):
         conn = get_connection()
         try:
             with conn:
@@ -208,3 +187,19 @@ elif page == PAGES[1]:
             st.error(f"Import gagal: {e}")
         finally:
             conn.close()
+
+
+# ======================================================
+# ENTRY POINT
+# ======================================================
+
+def render():
+    st.title("🎟️ Voucher Campaign Import")
+
+    tab_bs, tab_ls = st.tabs(["Beanspot", "LAWSON Kyoto Oden"])
+
+    with tab_bs:
+        _beanspot_tab()
+
+    with tab_ls:
+        _lawson_tab()
